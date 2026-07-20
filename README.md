@@ -1,4 +1,4 @@
-# ARP - Application de Gestion des Activités & Analyse de Performance
+# Application de Gestion des Activités & Analyse de Performance
 
 Projet 31 - ESPRIT (Encadrante: Mme Sana Abbes)
 
@@ -45,14 +45,14 @@ arp-project/
 
 ## Authentification (Login / Signup)
 
-Le login et le signup sont fonctionnels et connectés au schéma `esprittech2026` :
+Le login et le signup sont fonctionnels et connectés au schéma `esprittech` :
 
 - **Login** (`/login`) : sélection du rôle (Collaborateur / Responsable / Admin) + identifiant (email ou identifiant ESPRIT) + mot de passe. Retourne un JWT stocké en `localStorage`.
 - **Signup** (`/signup`) : création de compte Collaborateur ou Responsable (l'Admin est créé uniquement en base). Pour un Collaborateur, sélection dynamique des sous-équipes (chargées depuis `/api/sous-equipes`).
 - Les mots de passe sont hashés avec **bcrypt**, jamais stockés en clair.
 - Compte admin de test créé par `schema.sql` : email `admin@esprit.tn`, mot de passe `admin123` (à changer après le premier login).
 
-⚠️ Le schéma `esprittech2026.sql` fourni n'avait pas de colonnes mot de passe / identifiant pour `collaborateur` et `responsable`. `schema.sql` les ajoute (`mot_de_passe`, `identifiant_esprit`).
+⚠️ Le schéma `esprittech.sql` fourni n'avait pas de colonnes mot de passe / identifiant pour `collaborateur` et `responsable`. `schema.sql` les ajoute (`mot_de_passe`, `identifiant_esprit`).
 
 ## Prochaines étapes suggérées
 - [ ] Espaces Admin / Responsable / Collaborateur (dashboards, KPIs) — les maquettes HTML les mentionnent mais ne les détaillent pas encore
