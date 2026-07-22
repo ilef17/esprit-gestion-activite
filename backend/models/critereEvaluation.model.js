@@ -1,10 +1,11 @@
 import pool from '../config/db.js'
 
 // `code` ancre un critère à un calcul mesurable dans evaluationScore.model.js
-// (qualite / delais / implication / coordination). Les 4 critères de base en ont
-// un ; un critère personnalisé ajouté depuis l'UI a code = NULL et sa pondération
-// ne contribue à aucun calcul tant qu'aucune logique dédiée n'est écrite pour lui
-// (voir calculerScoresSousEquipe).
+// (qualite / delais / implication / coordination / activite_ecole). Les 5 critères de
+// base en ont un et sont protégés contre la suppression (voir deleteCritere plus bas) ;
+// seul un critère personnalisé ajouté depuis l'UI a code = NULL, et sa pondération ne
+// contribue à aucun calcul automatique tant qu'aucune logique dédiée n'a été écrite
+// pour lui (voir calculerScoresSousEquipe).
 export async function getAllCriteres() {
   const [rows] = await pool.query('SELECT * FROM critere_evaluation ORDER BY id_critere')
   return rows
@@ -34,7 +35,16 @@ export async function updateCritere(id, { nom, ponderation }) {
   return getCritereById(id)
 }
 
+// Un critère avec un `code` est connecté à un calcul automatique (voir
+// evaluationScore.model.js) : le supprimer casserait ce calcul pour tout le monde, sans
+// avantage — contrairement à un critère personnalisé, il n'a pas besoin d'être retiré
+// pour éviter la notation manuelle, puisqu'il n'y en a justement pas. On bloque donc sa
+// suppression ici, en plus du bouton ✕ masqué côté UI pour ces critères.
 export async function deleteCritere(id) {
+  const critere = await getCritereById(id)
+  if (critere?.code) {
+    throw new Error(`Le critère "${critere.nom}" est calculé automatiquement et ne peut pas être supprimé.`)
+  }
   await pool.query('DELETE FROM critere_evaluation WHERE id_critere = ?', [id])
 }
 

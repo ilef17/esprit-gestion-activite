@@ -1,5 +1,63 @@
 import pool from '../config/db.js'
 import { getAllCriteres } from './critereEvaluation.model.js'
+import { countEncadrementsParCollaborateur } from './Encadrement.model.js'
+import { countExpertisesParCollaborateur } from './Expertise.model.js'
+import { countActivitesParCollaborateurEtType } from './Activiteacademique.model.js'
+
+// Poids internes (avant normalisation par équipe) du critère "Activité Au Sein ESPRIT" :
+// un encadrement (PFA/PFE) représente un engagement continu sur tout un semestre, donc
+// pèse plus qu'une expertise déclarée ou une activité ponctuelle (jury, formation,
+// événement, comité d'organisation).
+const POIDS_ENCADREMENT = 2
+const POIDS_EXPERTISE = 1
+const POIDS_ACTIVITE = 1
+
+// Garde-fous sur la notation manuelle des critères personnalisés (code = NULL) : une
+// note manuelle n'a, par définition, aucune donnée vérifiable derrière elle. Pour
+// limiter le risque de favoritisme signalé sur "Activité Au Sein ESPRIT" (avant qu'il
+// devienne un critère connecté), on impose :
+// - un plafond sous le maximum de 20, pour qu'une note manuelle ne puisse jamais peser
+//   autant qu'une note automatique parfaite ;
+// - une justification écrite obligatoire, conservée avec la note (voir detail_json) —
+//   crée une trace auditable : si un admin favorise un ami, la justification insuffisante
+//   ou incohérente reste visible dans l'historique des scores.
+export const PLAFOND_NOTE_MANUELLE = 15
+export const JUSTIFICATION_MIN_LENGTH = 20
+
+// Note automatique pour "Activité Au Sein ESPRIT" — remplace l'ancienne notation
+// manuelle (grille "Noter les membres") par un calcul objectif à partir de données déjà
+// suivies ailleurs dans l'app : nombre d'étudiants encadrés, nombre d'expertises
+// déclarées, nombre d'activités académiques (jury, formation, événement, comité). Comme
+// pour le volume de tâches, chaque collaborateur est comparé à la moyenne de son équipe
+// plutôt qu'à un barème absolu, pour rester cohérent d'une équipe à l'autre.
+async function getActiviteEcoleRatios(membres) {
+  if (membres.length === 0) return {}
+  const [encadrements, expertises, activites] = await Promise.all([
+    countEncadrementsParCollaborateur(),
+    countExpertisesParCollaborateur(),
+    countActivitesParCollaborateurEtType(),
+  ])
+  const scoreBrut = {}
+  encadrements.forEach((r) => {
+    scoreBrut[r.id_collaborateur] = (scoreBrut[r.id_collaborateur] || 0) + Number(r.nb) * POIDS_ENCADREMENT
+  })
+  expertises.forEach((r) => {
+    scoreBrut[r.id_collaborateur] = (scoreBrut[r.id_collaborateur] || 0) + Number(r.nb) * POIDS_EXPERTISE
+  })
+  activites.forEach((r) => {
+    scoreBrut[r.id_collaborateur] = (scoreBrut[r.id_collaborateur] || 0) + Number(r.nb) * POIDS_ACTIVITE
+  })
+
+  const valeurs = membres.map((m) => scoreBrut[m.id_collaborateur] || 0)
+  const moyenneEquipe = valeurs.reduce((a, b) => a + b, 0) / valeurs.length
+
+  const ratios = {}
+  membres.forEach((m) => {
+    const valeur = scoreBrut[m.id_collaborateur] || 0
+    ratios[m.id_collaborateur] = moyenneEquipe > 0 ? Math.min(valeur / moyenneEquipe, 1) : (valeur > 0 ? 1 : 0)
+  })
+  return ratios
+}
 
 // ---------- helpers spécifiques au type d'équipe ----------
 // 'up'      -> table sous_equipe / collaborateur_sousequipe / colonne id_sous_equipe
@@ -109,9 +167,12 @@ async function getAvgTaskCount(teamId, type, nbMembres) {
 // pour chacun des 4 critères de base — dérivée des données existantes. Sert de
 // valeur de départ pré-remplie dans la grille de notation ; l'admin peut la
 // remplacer par une note manuelle qui prendra le dessus.
-async function computeSuggestedRatios({ idCollaborateur, teamId, type, avgTaskCount }) {
+async function computeSuggestedRatios({ idCollaborateur, teamId, type, avgTaskCount, activiteEcoleRatio }) {
   if (type === 'hors_up') {
-    return { qualite: 0, delais: 0, implication: 0, coordination: 0 }
+    // Contrairement aux tâches (non suivies pour les équipes hors UP), l'activité école
+    // (encadrements, expertises, activités académiques) est indépendante du type
+    // d'équipe : elle reste calculée normalement ici.
+    return { qualite: 0, delais: 0, implication: 0, coordination: 0, activite_ecole: activiteEcoleRatio }
   }
 
   const [taches] = await pool.query(
@@ -142,7 +203,7 @@ async function computeSuggestedRatios({ idCollaborateur, teamId, type, avgTaskCo
 
   const coordination = terminees > 0 ? 1 : 0
 
-  return { qualite, delais, implication, coordination }
+  return { qualite, delais, implication, coordination, activite_ecole: activiteEcoleRatio }
 }
 
 export async function getGrilleNotes(teamId, type = 'up') {
@@ -163,6 +224,7 @@ export async function getGrilleNotes(teamId, type = 'up') {
   })
 
   const grille = []
+  const activiteEcoleRatios = await getActiviteEcoleRatios(membres)
   for (const membre of membres) {
     const saved = savedByCollab[membre.id_collaborateur]
     const suggestions = await computeSuggestedRatios({
@@ -170,9 +232,11 @@ export async function getGrilleNotes(teamId, type = 'up') {
       teamId,
       type,
       avgTaskCount,
+      activiteEcoleRatio: activiteEcoleRatios[membre.id_collaborateur] || 0,
     })
 
     const notes = {}
+    const justifications = {}
     for (const critere of criteres) {
       const key = critere.code || `custom_${critere.id_critere}`
       if (critere.code) {
@@ -181,33 +245,51 @@ export async function getGrilleNotes(teamId, type = 'up') {
         notes[critere.id_critere] = Math.round(suggestions[critere.code] * 20 * 100) / 100
       } else {
         // Critère personnalisé : aucune source automatique, on garde la dernière
-        // note manuelle enregistrée pour cette période (ou vide si jamais notée).
+        // note manuelle (et sa justification) enregistrée pour cette période, pour
+        // pré-remplir la grille — l'admin doit néanmoins reconfirmer/adapter la
+        // justification à chaque nouvelle application (voir calculerScoresEquipe).
         const savedNote = saved?.[key]?.note
         notes[critere.id_critere] = savedNote !== undefined && savedNote !== null ? savedNote : null
+        justifications[critere.id_critere] = saved?.[key]?.justification || ''
       }
     }
-    grille.push({ id_collaborateur: membre.id_collaborateur, nom: membre.nom, notes })
+    grille.push({ id_collaborateur: membre.id_collaborateur, nom: membre.nom, notes, justifications })
   }
 
   return { criteres, grille, annee_universitaire, semestre }
 }
 
-export async function calculerScoresEquipe(teamId, notesOverride = {}, type = 'up') {
+export async function calculerScoresEquipe(teamId, notesOverride = {}, type = 'up', periodeOverride = {}) {
   const membres = await getMembres(teamId, type)
-  const { annee_universitaire, semestre } = await getPeriodeActive()
+  // Priorité à la période sélectionnée dans le tableau de bord au moment du calcul
+  // (envoyée par le front) — le paramètre système `semestre_actif` ne sert plus que
+  // de repli si aucune période n'est fournie par l'appelant.
+  let { annee_universitaire, semestre } = periodeOverride
+  if (!annee_universitaire || !semestre) {
+    const active = await getPeriodeActive()
+    annee_universitaire = annee_universitaire || active.annee_universitaire
+    semestre = semestre || active.semestre
+  }
   const criteres = await getAllCriteres()
   const totalPonderation = criteres.reduce((s, c) => s + Number(c.ponderation), 0) || 100
   const avgTaskCount = await getAvgTaskCount(teamId, type, membres.length)
   const idSousEquipe = type === 'up' ? teamId : null
   const idUp = type === 'hors_up' ? teamId : null
 
-  const results = []
+  const activiteEcoleRatios = await getActiviteEcoleRatios(membres)
+
+  // Passe 1 : calcule et VALIDE le score de chaque membre sans rien écrire en base.
+  // Une note manuelle manquante ou sans justification suffisante doit bloquer tout le
+  // calcul de l'équipe — sinon on risquerait d'enregistrer les scores des membres déjà
+  // valides pendant qu'un autre membre reste avec une note personnalisée non justifiée.
+  const prepared = []
   for (const membre of membres) {
     const suggestions = await computeSuggestedRatios({
       idCollaborateur: membre.id_collaborateur,
       teamId,
       type,
       avgTaskCount,
+      activiteEcoleRatio: activiteEcoleRatios[membre.id_collaborateur] || 0,
     })
     const overrides = notesOverride[membre.id_collaborateur] || {}
 
@@ -215,14 +297,32 @@ export async function calculerScoresEquipe(teamId, notesOverride = {}, type = 'u
     const detail = {}
     for (const critere of criteres) {
       const key = critere.code || `custom_${critere.id_critere}`
-      const provided = overrides[critere.id_critere]
 
       let note
-      if (provided !== undefined && provided !== null && provided !== '') {
-        note = Math.max(0, Math.min(20, Number(provided)))
-      } else if (critere.code) {
+      let justification
+      if (critere.code) {
+        // Critère connecté : toujours recalculé à partir des données réelles, un
+        // éventuel override est ignoré (il n'y a pas de notation manuelle possible).
         note = Math.round(suggestions[critere.code] * 20 * 100) / 100
+      } else if (Number(critere.ponderation) > 0) {
+        // Critère personnalisé qui compte réellement dans le score : note manuelle
+        // obligatoire, plafonnée, avec justification écrite obligatoire — voir les
+        // constantes PLAFOND_NOTE_MANUELLE / JUSTIFICATION_MIN_LENGTH en tête de fichier.
+        const provided = overrides[critere.id_critere]
+        const noteFournie = provided?.note
+        if (noteFournie === undefined || noteFournie === null || noteFournie === '') {
+          throw new Error(`Note manquante pour le critère personnalisé "${critere.nom}" (${membre.nom}).`)
+        }
+        justification = String(provided?.justification || '').trim()
+        if (justification.length < JUSTIFICATION_MIN_LENGTH) {
+          throw new Error(
+            `Justification requise (au moins ${JUSTIFICATION_MIN_LENGTH} caractères) pour la note de "${critere.nom}" (${membre.nom}).`
+          )
+        }
+        note = Math.max(0, Math.min(PLAFOND_NOTE_MANUELLE, Number(noteFournie)))
       } else {
+        // Critère personnalisé à pondération 0 : n'affecte pas le score, pas besoin
+        // d'imposer une note/justification tant qu'il n'est pas réellement activé.
         note = 0
       }
 
@@ -233,18 +333,24 @@ export async function calculerScoresEquipe(teamId, notesOverride = {}, type = 'u
         note,
         ratio: Math.round(ratio * 100) / 100,
         connecte: Boolean(critere.code),
+        ...(justification ? { justification } : {}),
       }
       scoreBrut += ratio * Number(critere.ponderation)
     }
     const score = Math.round((scoreBrut / totalPonderation) * 20 * 100) / 100
+    prepared.push({ membre, score, detail })
+  }
 
-   await pool.query(
-  `INSERT INTO evaluation_score
-     (id_collaborateur, id_sous_equipe, id_up, type_equipe, equipe_key, annee_universitaire, semestre, score, detail_json)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-   ON DUPLICATE KEY UPDATE score = VALUES(score), detail_json = VALUES(detail_json), date_calcul = NOW()`,
-  [membre.id_collaborateur, idSousEquipe, idUp, type, teamId, annee_universitaire, semestre, score, JSON.stringify(detail)]
-)
+  // Passe 2 : tout est valide, on peut écrire.
+  const results = []
+  for (const { membre, score, detail } of prepared) {
+    await pool.query(
+      `INSERT INTO evaluation_score
+         (id_collaborateur, id_sous_equipe, id_up, type_equipe, equipe_key, annee_universitaire, semestre, score, detail_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE score = VALUES(score), detail_json = VALUES(detail_json), date_calcul = NOW()`,
+      [membre.id_collaborateur, idSousEquipe, idUp, type, teamId, annee_universitaire, semestre, score, JSON.stringify(detail)]
+    )
     results.push({ id_collaborateur: membre.id_collaborateur, nom: membre.nom, score, detail })
   }
   return results
@@ -253,9 +359,33 @@ export async function calculerScoresEquipe(teamId, notesOverride = {}, type = 'u
 // Alias conservé pour compatibilité si d'autres fichiers importent l'ancien nom.
 export { calculerScoresEquipe as calculerScoresSousEquipe }
 
-// Dernier score calculé pour le collaborateur connecté (page "Mon profil"), toutes équipes
-// confondues (UP ou hors UP), le plus récent en premier.
-export async function getMonDernierScore(idCollaborateur) {
+// Scores calculés pour le collaborateur connecté (page "Mon profil"), un par équipe
+// (UP ou hors UP) dont il est membre — le plus récent en premier. Avant, seul le score
+// le plus récent tous équipes confondues était renvoyé (LIMIT 1), ce qui masquait le
+// score des autres équipes pour un collaborateur qui en a plusieurs.
+// Scores calculés pour le collaborateur connecté (page "Mon profil"), un par équipe
+// (UP ou hors UP) dont il est membre. Quand une période (annee_universitaire + semestre)
+// est fournie, on renvoie le score de CETTE période précisément (le tableau a bien ces
+// colonnes) — une équipe non évaluée sur cette période n'apparaît simplement pas. Sans
+// période fournie, on garde l'ancien comportement (le plus récent par équipe) pour ne
+// rien casser côté appels existants qui n'auraient pas encore été mis à jour.
+export async function getMesScores(idCollaborateur, anneeUniversitaire, semestre) {
+  if (anneeUniversitaire && semestre) {
+    const [rows] = await pool.query(
+      `SELECT
+        es.id_score, es.type_equipe, es.annee_universitaire, es.semestre, es.score, es.date_calcul,
+        CASE WHEN es.type_equipe = 'hors_up'
+          THEN (SELECT nom_up FROM equipe_hors_up WHERE id_up = es.id_up)
+          ELSE (SELECT nom FROM sous_equipe WHERE id_sous_equipe = es.id_sous_equipe)
+        END AS equipe_nom
+      FROM evaluation_score es
+      WHERE es.id_collaborateur = ? AND es.annee_universitaire = ? AND es.semestre = ?
+      ORDER BY es.date_calcul DESC`,
+      [idCollaborateur, anneeUniversitaire, semestre]
+    )
+    return rows
+  }
+
   const [rows] = await pool.query(
     `SELECT
       es.id_score, es.type_equipe, es.annee_universitaire, es.semestre, es.score, es.date_calcul,
@@ -264,10 +394,15 @@ export async function getMonDernierScore(idCollaborateur) {
         ELSE (SELECT nom FROM sous_equipe WHERE id_sous_equipe = es.id_sous_equipe)
       END AS equipe_nom
     FROM evaluation_score es
+    INNER JOIN (
+      SELECT equipe_key, MAX(date_calcul) AS max_date
+      FROM evaluation_score
+      WHERE id_collaborateur = ?
+      GROUP BY equipe_key
+    ) latest ON latest.equipe_key = es.equipe_key AND latest.max_date = es.date_calcul
     WHERE es.id_collaborateur = ?
-    ORDER BY es.date_calcul DESC
-    LIMIT 1`,
-    [idCollaborateur]
+    ORDER BY es.date_calcul DESC`,
+    [idCollaborateur, idCollaborateur]
   )
-  return rows[0] || null
+  return rows
 }

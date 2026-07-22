@@ -78,20 +78,35 @@ cron.schedule('0 2 * * *', async () => {
   }
 })
 
-// Rappel d'échéance de tâche (J-2), tous les jours à 07:00 : notification in-app
-// systématique + email si le collaborateur a activé "notifications_email" dans son
-// profil. `rappel_echeance_envoye` empêche un double envoi si le cron est relancé.
-cron.schedule('0 7 * * *', async () => {
+// Rappel d'échéance de tâche (fenêtre <= J-2), tous les jours à 07:00 : notification
+// in-app systématique + email si le collaborateur a activé "notifications_email" dans
+// son profil. `rappel_echeance_envoye` empêche un double envoi si le cron est relancé.
+// Extraite en fonction nommée pour pouvoir être aussi appelée une fois au démarrage
+// (voir plus bas) : si le process était down pile à 07:00 (serveur redémarré, machine
+// endormie...), on ne veut pas attendre le lendemain — une tâche à échéance du jour
+// même risquerait de sortir de la fenêtre avant le prochain tick planifié.
+async function envoyerRappelsEcheance() {
   try {
     const taches = await getTachesEcheanceProche()
+    const aujourdHui = new Date()
+    aujourdHui.setHours(0, 0, 0, 0)
     for (const tache of taches) {
       try {
+        // La fenêtre couvre J, J+1 et J+2 (voir getTachesEcheanceProche) : le titre
+        // doit refléter le nombre de jours réel, pas toujours "2 jours".
+        const dateEcheance = new Date(tache.date_echeance)
+        dateEcheance.setHours(0, 0, 0, 0)
+        const joursRestants = Math.round((dateEcheance - aujourdHui) / (1000 * 60 * 60 * 24))
+        const titre =
+          joursRestants <= 0 ? "Échéance aujourd'hui"
+          : joursRestants === 1 ? 'Échéance demain'
+          : `Échéance dans ${joursRestants} jours`
         await creerNotification({
           id_utilisateur: tache.id_collaborateur,
           type_utilisateur: 'collaborateur',
           type: 'tache_echeance',
-          titre: "Échéance dans 2 jours",
-          message: `La tâche "${tache.titre}" arrive à échéance le ${new Date(tache.date_echeance).toLocaleDateString('fr-FR')}`,
+          titre,
+          message: `La tâche "${tache.titre}" arrive à échéance le ${dateEcheance.toLocaleDateString('fr-FR')}`,
           lien_page: 'taches',
         })
         if (tache.notifications_email && tache.collaborateur_email) {
@@ -110,4 +125,13 @@ cron.schedule('0 7 * * *', async () => {
   } catch (err) {
     console.error('Erreur planificateur de rappel d\'échéance:', err)
   }
-})
+}
+
+cron.schedule('0 7 * * *', envoyerRappelsEcheance)
+
+// Filet de sécurité : si le cron de 07:00 a été raté (process down au bon moment,
+// comme observé via les logs "missed execution" de node-cron), on rattrape tout de
+// suite au démarrage plutôt que d'attendre jusqu'à 24h — une tâche à échéance du
+// jour même pourrait sinon sortir définitivement de la fenêtre sans jamais être
+// notifiée.
+envoyerRappelsEcheance()

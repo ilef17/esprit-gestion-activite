@@ -174,6 +174,45 @@ function periodeParDefaut() {
   return { annee: `${anneeDebut}/${anneeDebut + 1}`, semestre: (mois >= 9 || mois <= 1) ? 'S1' : 'S2' }
 }
 
+// Même règle de découpage que le backend (utils/periode.js) et que le tableau de
+// bord collaborateur, appliquée côté client pour filtrer les campagnes de vœux
+// pédagogiques (date_creation) et les activités école (date_activite), qui n'ont
+// pas de colonnes annee_universitaire/semestre dédiées comme les tâches.
+function periodeDeDate(dateStr) {
+  // Lit directement les composants année/mois de la chaîne ISO (YYYY-MM-DD…) plutôt
+  // que de passer par un objet Date, pour éviter un décalage de jour/mois dû à la
+  // conversion de fuseau horaire (ex. une date stockée à minuit UTC qui basculerait
+  // sur le jour précédent une fois interprétée dans le fuseau du navigateur).
+  const m = typeof dateStr === 'string' && dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  let annee, mois
+  if (m) {
+    annee = Number(m[1])
+    mois = Number(m[2])
+  } else {
+    const d = new Date(dateStr)
+    if (Number.isNaN(d.getTime())) return null
+    annee = d.getFullYear()
+    mois = d.getMonth() + 1
+  }
+  const anneeDebut = mois >= 9 ? annee : annee - 1
+  return { annee: `${anneeDebut}/${anneeDebut + 1}`, semestre: (mois >= 9 || mois <= 1) ? 'S1' : 'S2' }
+}
+// Une entrée sans date reste toujours visible, quel que soit le filtre.
+function estDansPeriode(dateStr, filtreAnnee, filtreSemestre) {
+  if (!dateStr) return true
+  const p = periodeDeDate(dateStr)
+  if (!p) return true
+  return p.annee === filtreAnnee && p.semestre === filtreSemestre
+}
+
+// Les encadrements n'ont qu'une année universitaire libre (pas de semestre) : ils
+// restent visibles sur les deux semestres de leur année. Sans année renseignée,
+// toujours visible (même logique que les entrées sans date).
+function estDansAnnee(anneeUniversitaire, filtreAnnee) {
+  if (!anneeUniversitaire) return true
+  return anneeUniversitaire === filtreAnnee
+}
+
 export default function AdminDashboard() {
   const { user, logout, updateUser: updateAuthUser } = useAuth()
   const [activePage, setActivePage] = useState('dashboard')
@@ -369,6 +408,7 @@ export default function AdminDashboard() {
             {activePage === 'dashboard' && (
               <DashboardHome
                 teams={sousEquipes}
+                horsUpTeams={equipesHorsUp}
                 loadingTeams={loadingTeams}
                 users={users}
                 demandes={demandes}
@@ -405,16 +445,16 @@ export default function AdminDashboard() {
               <Demandes demandes={demandes} showToast={showToast} onChanged={refreshDemandes} />
             )}
             {activePage === 'evaluation' && (
-              <Evaluation teams={sousEquipes} horsUpTeams={equipesHorsUp} showToast={showToast} />
+              <Evaluation teams={sousEquipes} horsUpTeams={equipesHorsUp} showToast={showToast} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} />
             )}
             {activePage === 'rapports' && (
               <Rapports teams={sousEquipes} users={users} showToast={showToast} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} />
             )}
             {activePage === 'activite-ecole' && (
-              <ActiviteEcole showToast={showToast} />
+              <ActiviteEcole showToast={showToast} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} />
             )}
             {activePage === 'voeux-pedagogiques' && (
-              <VoeuxPedagogiques showToast={showToast} teams={sousEquipes} />
+              <VoeuxPedagogiques showToast={showToast} teams={sousEquipes} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} />
             )}
             {activePage === 'sauvegardes' && (
               <Sauvegardes showToast={showToast} />
@@ -507,7 +547,7 @@ function PieChartRepartition({ data }) {
 }
 
 /* ================= DASHBOARD ================= */
-function DashboardHome({ teams, loadingTeams, users, demandes, filtreAnnee, filtreSemestre, onAnneeChange, onSemestreChange, onNavigate }) {
+function DashboardHome({ teams, horsUpTeams, loadingTeams, users, demandes, filtreAnnee, filtreSemestre, onAnneeChange, onSemestreChange, onNavigate }) {
   const collaborateursActifs = users.filter((u) => u.role === 'collaborateur' && u.actif).length
   const tauxGlobal = teams.length
     ? Math.round(teams.reduce((s, t) => s + (t.avancement || 0), 0) / teams.length)
@@ -521,29 +561,34 @@ function DashboardHome({ teams, loadingTeams, users, demandes, filtreAnnee, filt
     getCriteres().then((data) => setCriteresEval(data.criteres || [])).catch((err) => console.error(err))
   }, [])
 
-  // Meilleur / moins bon membre d'une sous-équipe, par évaluation (score /20)
-  const [teamPourClassement, setTeamPourClassement] = useState('')
+  // Meilleur / moins bon membre d'une équipe (UP ou hors UP), par évaluation (score /20)
+  const equipesPourClassement = [
+    ...teams.map((t) => ({ ...t, type: 'up' })),
+    ...(horsUpTeams || []).map((t) => ({ ...t, type: 'hors_up' })),
+  ]
+  const [teamPourClassement, setTeamPourClassement] = useState('') // `${type}:${id}`
   const [scoresEquipe, setScoresEquipe] = useState([])
   const [loadingScores, setLoadingScores] = useState(false)
 
   useEffect(() => {
-    // Resynchronise la sélection avec la liste de sous-équipes courante : si
+    // Resynchronise la sélection avec la liste d'équipes courante : si
     // l'équipe choisie n'existe plus pour la période affichée (ou qu'il n'y a
     // plus aucune équipe), on retombe sur la première dispo ou sur rien du
     // tout — sinon le classement continue d'afficher les scores d'une équipe
     // qui n'appartient même plus à la période sélectionnée.
-    if (teams.length === 0) {
+    if (equipesPourClassement.length === 0) {
       if (teamPourClassement) setTeamPourClassement('')
       return
     }
-    const stillExists = teams.some((t) => String(t.id) === teamPourClassement)
-    if (!stillExists) setTeamPourClassement(String(teams[0].id))
-  }, [teams, teamPourClassement])
+    const stillExists = equipesPourClassement.some((t) => `${t.type}:${t.id}` === teamPourClassement)
+    if (!stillExists) setTeamPourClassement(`${equipesPourClassement[0].type}:${equipesPourClassement[0].id}`)
+  }, [equipesPourClassement, teamPourClassement])
 
   useEffect(() => {
     if (!teamPourClassement) { setScoresEquipe([]); return }
+    const [type, id] = teamPourClassement.split(':')
     setLoadingScores(true)
-    getScores({ sous_equipe: teamPourClassement, annee: filtreAnnee, semestre: filtreSemestre })
+    getScores({ sous_equipe: id, type, annee: filtreAnnee, semestre: filtreSemestre })
       .then(setScoresEquipe)
       .catch((err) => console.error(err))
       .finally(() => setLoadingScores(false))
@@ -572,19 +617,19 @@ function DashboardHome({ teams, loadingTeams, users, demandes, filtreAnnee, filt
   return (
     <>
       <div className="kpi-grid">
-        <div className="kpi">
+        <div className="kpi" style={{ cursor: 'pointer' }} role="button" tabIndex={0} onClick={() => onNavigate?.('utilisateurs')} onKeyDown={(e) => e.key === 'Enter' && onNavigate?.('utilisateurs')}>
           <div className="top"><div className="icon-wrap red"><Icon.users /></div></div>
           <div className="num">{collaborateursActifs}</div><div className="label">Collaborateurs actifs</div>
         </div>
-        <div className="kpi">
+        <div className="kpi" style={{ cursor: 'pointer' }} role="button" tabIndex={0} onClick={() => onNavigate?.('sous-equipes')} onKeyDown={(e) => e.key === 'Enter' && onNavigate?.('sous-equipes')}>
           <div className="top"><div className="icon-wrap blue"><Icon.teams /></div></div>
           <div className="num">{loadingTeams ? '…' : teams.length}</div><div className="label">Sous-équipes</div>
         </div>
-        <div className="kpi">
+        <div className="kpi" style={{ cursor: 'pointer' }} role="button" tabIndex={0} onClick={() => onNavigate?.('demandes')} onKeyDown={(e) => e.key === 'Enter' && onNavigate?.('demandes')}>
           <div className="top"><div className="icon-wrap amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div></div>
           <div className="num">{demandes.length}</div><div className="label">Demandes hors-équipe</div>
         </div>
-        <div className="kpi">
+        <div className="kpi" style={{ cursor: 'pointer' }} role="button" tabIndex={0} onClick={() => onNavigate?.('rapports')} onKeyDown={(e) => e.key === 'Enter' && onNavigate?.('rapports')}>
           <div className="top"><div className="icon-wrap green"><Icon.check /></div></div>
           <div className="num">{tauxGlobal}%</div><div className="label">Taux de complétion global</div>
         </div>
@@ -597,19 +642,20 @@ function DashboardHome({ teams, loadingTeams, users, demandes, filtreAnnee, filt
               <div><h2>Sous-équipes</h2><div className="hint">Avancement des tâches par équipe</div></div>
             </div>
             <table>
-              <thead><tr><th>Équipe</th><th>Responsable</th><th>Membres</th><th>Avancement</th><th>Statut</th></tr></thead>
+              <thead><tr><th>Équipe</th><th>Type</th><th>Responsable</th><th>Membres</th><th>Avancement</th><th>Statut</th></tr></thead>
               <tbody>
-                {teams.map((t) => (
-                  <tr key={t.id}>
+                {equipesPourClassement.map((t) => (
+                  <tr key={`${t.type}-${t.id}`}>
                     <td><b>{t.nom}</b></td>
+                    <td><span className={`badge ${t.type === 'up' ? 'validee' : 'refaire'}`}>{t.type === 'up' ? 'UP' : 'Hors UP'}</span></td>
                     <td><div className="name-cell"><div className="avatar sm">{initials(t.responsable)}</div><span className="n">{t.responsable}</span></div></td>
                     <td>{t.membres_count} membre{t.membres_count > 1 ? 's' : ''}</td>
                     <td><div className="progress-row"><div className="progress-track"><div className="progress-fill" style={{ width: `${t.avancement}%` }} /></div><span>{t.avancement}%</span></div></td>
                     <td><span className={`badge ${t.statut === 'Active' ? 'validee' : 'refaire'}`}>{t.statut}</span></td>
                   </tr>
                 ))}
-                {!loadingTeams && teams.length === 0 && (
-                  <tr><td colSpan={5} style={{ textAlign: 'center', color: 'var(--text-faint)' }}>Aucune sous-équipe pour l'instant</td></tr>
+                {!loadingTeams && equipesPourClassement.length === 0 && (
+                  <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-faint)' }}>Aucune équipe pour l'instant</td></tr>
                 )}
               </tbody>
             </table>
@@ -618,20 +664,25 @@ function DashboardHome({ teams, loadingTeams, users, demandes, filtreAnnee, filt
           <div className="card" style={{ marginTop: 16 }}>
             <div className="card-head">
               <div><h2>Meilleur / moins bon membre</h2><div className="hint">Par évaluation, sur la période sélectionnée en haut de page</div></div>
-              {teams.length > 0 && (
+              {equipesPourClassement.length > 0 && (
                 <select className="select-chip" value={teamPourClassement} onChange={(e) => setTeamPourClassement(e.target.value)} style={{ border: '1px solid var(--border)', background: 'var(--card)' }}>
-                  {teams.map((t) => <option key={t.id} value={t.id}>{t.nom}</option>)}
+                  <optgroup label="Sous-équipes (UP)">
+                    {teams.map((t) => <option key={`c-up-${t.id}`} value={`up:${t.id}`}>{t.nom}</option>)}
+                  </optgroup>
+                  <optgroup label="Équipes hors UP">
+                    {(horsUpTeams || []).map((t) => <option key={`c-hu-${t.id}`} value={`hors_up:${t.id}`}>{t.nom}</option>)}
+                  </optgroup>
                 </select>
               )}
             </div>
-            {teams.length === 0 && (
+            {equipesPourClassement.length === 0 && (
               <div className="hint" style={{ padding: '16px 0' }}>Aucune sous-équipe pour cette période</div>
             )}
-            {teams.length > 0 && loadingScores && <div className="hint" style={{ padding: '16px 0' }}>Chargement…</div>}
-            {teams.length > 0 && !loadingScores && scoresEquipe.length === 0 && (
-              <div className="hint" style={{ padding: '16px 0' }}>Aucun score calculé pour cette sous-équipe — voir la page Évaluation</div>
+            {equipesPourClassement.length > 0 && loadingScores && <div className="hint" style={{ padding: '16px 0' }}>Chargement…</div>}
+            {equipesPourClassement.length > 0 && !loadingScores && scoresEquipe.length === 0 && (
+              <div className="hint" style={{ padding: '16px 0' }}>Aucun score calculé pour cette équipe — voir la page Évaluation</div>
             )}
-            {teams.length > 0 && !loadingScores && scoresEquipe.length > 0 && (
+            {equipesPourClassement.length > 0 && !loadingScores && scoresEquipe.length > 0 && (
               <div>
                 <div className="list-item" style={{ borderRadius: 'var(--radius-sm)', border: '1px solid var(--green-tint, #E7F8EF)', background: 'var(--green-tint, #E7F8EF)', marginBottom: 10 }}>
                   <div className="avatar sm">{initials(meilleur.collaborateur_nom)}</div>
@@ -649,6 +700,36 @@ function DashboardHome({ teams, loadingTeams, users, demandes, filtreAnnee, filt
                 </div>
               </div>
             )}
+          </div>
+
+          <div className="card" style={{ marginTop: 16 }}>
+            <div className="card-head">
+              <div><h2>Taux de complétion des tâches</h2><div className="hint">Par collaborateur</div></div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <select
+                  value={chartAnnee}
+                  onChange={(e) => setChartAnnee(e.target.value)}
+                  className="select-chip"
+                  style={{ border: '1px solid var(--border)', background: 'var(--card)' }}
+                  title="Filtrer ce graphique par année universitaire"
+                >
+                  <option value="2025/2026">2025 / 2026</option>
+                  <option value="2024/2025">2024 / 2025</option>
+                </select>
+                <select
+                  value={chartSemestre}
+                  onChange={(e) => setChartSemestre(e.target.value)}
+                  className="select-chip"
+                  style={{ border: '1px solid var(--border)', background: 'var(--card)' }}
+                  title="Filtrer ce graphique par semestre"
+                >
+                  <option value="S1">Semestre 1</option>
+                  <option value="S2">Semestre 2</option>
+                </select>
+                <button className="icon-btn sm" title="Voir les rapports détaillés" onClick={() => onNavigate?.('rapports')}><Icon.reports /></button>
+              </div>
+            </div>
+            <BarChartTaux data={statsCompletion} />
           </div>
         </div>
 
@@ -689,42 +770,7 @@ function DashboardHome({ teams, loadingTeams, users, demandes, filtreAnnee, filt
               )}
             </div>
           </div>
-        </div>
-      </div>
 
-      <div className="grid-2" style={{ marginTop: 16 }}>
-        <div>
-          <div className="card">
-            <div className="card-head">
-              <div><h2>Taux de complétion des tâches</h2><div className="hint">Par collaborateur</div></div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <select
-                  value={chartAnnee}
-                  onChange={(e) => setChartAnnee(e.target.value)}
-                  className="select-chip"
-                  style={{ border: '1px solid var(--border)', background: 'var(--card)' }}
-                  title="Filtrer ce graphique par année universitaire"
-                >
-                  <option value="2025/2026">2025 / 2026</option>
-                  <option value="2024/2025">2024 / 2025</option>
-                </select>
-                <select
-                  value={chartSemestre}
-                  onChange={(e) => setChartSemestre(e.target.value)}
-                  className="select-chip"
-                  style={{ border: '1px solid var(--border)', background: 'var(--card)' }}
-                  title="Filtrer ce graphique par semestre"
-                >
-                  <option value="S1">Semestre 1</option>
-                  <option value="S2">Semestre 2</option>
-                </select>
-                <button className="icon-btn sm" title="Voir les rapports détaillés" onClick={() => onNavigate?.('rapports')}><Icon.reports /></button>
-              </div>
-            </div>
-            <BarChartTaux data={statsCompletion} />
-          </div>
-        </div>
-        <div>
           <div className="card">
             <div className="card-head"><div><h2>Répartition des taux</h2><div className="hint">Tous collaborateurs — nom et taux de complétion</div></div></div>
             <PieChartRepartition data={repartitionPie} />
@@ -1935,7 +1981,7 @@ function CategoryListModal({ title, items, onClose }) {
   )
 }
 
-function ActiviteEcole({ showToast }) {
+function ActiviteEcole({ showToast, filtreAnnee, filtreSemestre }) {
   const [professeurs, setProfesseurs] = useState([])
   const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState('')
@@ -1954,6 +2000,12 @@ function ActiviteEcole({ showToast }) {
   useEffect(() => { refresh() }, [refresh])
 
   const filtered = professeurs.filter((p) => p.nom.toLowerCase().includes(query.toLowerCase()))
+  // Les colonnes jury/formation/événements/comités sont filtrées sur la période
+  // sélectionnée (semestre inclus) ; les encadrements n'ont qu'une année universitaire
+  // (pas de semestre) donc filtrés uniquement sur l'année. Les expertises n'ont
+  // aucune notion de période et restent donc toujours affichées en entier.
+  const dansPeriode = (items) => (items || []).filter((it) => estDansPeriode(it.date, filtreAnnee, filtreSemestre))
+  const dansAnnee = (items) => (items || []).filter((it) => estDansAnnee(it.annee_universitaire, filtreAnnee))
 
   return (
     <>
@@ -1992,15 +2044,15 @@ function ActiviteEcole({ showToast }) {
               {filtered.map((p) => (
                 <tr key={p.id}>
                   <td><div className="name-cell"><div className="avatar sm">{initials(p.nom)}</div><span className="n">{p.nom}</span></div></td>
-                  <td>{p.nb_etudiants_encadres}</td>
+                  <td><CellLibelle items={dansAnnee(p.encadrements)} onOpenDetail={(items) => setCategoryModal({ title: `Étudiants encadrés — ${p.nom}`, items })} /></td>
                   <td><CellLibelle items={p.expertises} onOpenDetail={(items) => setCategoryModal({ title: `Expertises — ${p.nom}`, items })} /></td>
-                  <td><CellLibelle items={p.membre_jury} onOpenDetail={(items) => setCategoryModal({ title: `Membre de jury — ${p.nom}`, items })} /></td>
-                  <td><CellLibelle items={p.president_jury} onOpenDetail={(items) => setCategoryModal({ title: `Président de jury — ${p.nom}`, items })} /></td>
-                  <td><CellLibelle items={p.formation_ete} onOpenDetail={(items) => setCategoryModal({ title: `Formation d'été — ${p.nom}`, items })} /></td>
-                  <td><CellLibelle items={p.formation_hiver} onOpenDetail={(items) => setCategoryModal({ title: `Formation d'hiver — ${p.nom}`, items })} /></td>
-                  <td><CellLibelle items={p.formation_printemps} onOpenDetail={(items) => setCategoryModal({ title: `Formation de printemps — ${p.nom}`, items })} /></td>
-                  <td><CellLibelle items={p.evenement} onOpenDetail={(items) => setCategoryModal({ title: `Événements — ${p.nom}`, items })} /></td>
-                  <td><CellLibelle items={p.comite_organisation} onOpenDetail={(items) => setCategoryModal({ title: `Comités — ${p.nom}`, items })} /></td>
+                  <td><CellLibelle items={dansPeriode(p.membre_jury)} onOpenDetail={(items) => setCategoryModal({ title: `Membre de jury — ${p.nom}`, items })} /></td>
+                  <td><CellLibelle items={dansPeriode(p.president_jury)} onOpenDetail={(items) => setCategoryModal({ title: `Président de jury — ${p.nom}`, items })} /></td>
+                  <td><CellLibelle items={dansPeriode(p.formation_ete)} onOpenDetail={(items) => setCategoryModal({ title: `Formation d'été — ${p.nom}`, items })} /></td>
+                  <td><CellLibelle items={dansPeriode(p.formation_hiver)} onOpenDetail={(items) => setCategoryModal({ title: `Formation d'hiver — ${p.nom}`, items })} /></td>
+                  <td><CellLibelle items={dansPeriode(p.formation_printemps)} onOpenDetail={(items) => setCategoryModal({ title: `Formation de printemps — ${p.nom}`, items })} /></td>
+                  <td><CellLibelle items={dansPeriode(p.evenement)} onOpenDetail={(items) => setCategoryModal({ title: `Événements — ${p.nom}`, items })} /></td>
+                  <td><CellLibelle items={dansPeriode(p.comite_organisation)} onOpenDetail={(items) => setCategoryModal({ title: `Comités — ${p.nom}`, items })} /></td>
                   <td>
                     <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
                       <button className="icon-btn sm" title="Ajouter une expertise" onClick={() => setAddingExpertiseFor(p)}><Icon.plus /></button>
@@ -2021,6 +2073,8 @@ function ActiviteEcole({ showToast }) {
           professeur={selected}
           onClose={() => setSelected(null)}
           showToast={showToast}
+          filtreAnnee={filtreAnnee}
+          filtreSemestre={filtreSemestre}
         />
       )}
       {addingExpertiseFor && (
@@ -2052,7 +2106,7 @@ const ACTIVITE_LABELS = {
   comite_organisation: "Comité d'organisation",
 }
 
-function ProfesseurDetail({ professeur, onClose, showToast }) {
+function ProfesseurDetail({ professeur, onClose, showToast, filtreAnnee, filtreSemestre }) {
   const [loading, setLoading] = useState(true)
   const [detail, setDetail] = useState({
     expertises: [], encadrements: [],
@@ -2068,6 +2122,8 @@ function ProfesseurDetail({ professeur, onClose, showToast }) {
       .catch((err) => { console.error(err); showToast('Erreur lors du chargement du détail') })
       .finally(() => setLoading(false))
   }, [professeur.id, showToast])
+
+  const encadrementsFiltres = detail.encadrements.filter((enc) => estDansAnnee(enc.annee_universitaire, filtreAnnee))
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -2093,10 +2149,10 @@ function ProfesseurDetail({ professeur, onClose, showToast }) {
               </div>
 
               <div className="field full">
-                <label>Étudiants encadrés ({detail.encadrements.length})</label>
+                <label>Étudiants encadrés ({encadrementsFiltres.length})</label>
                 <div style={{ marginTop: 4 }}>
-                  {detail.encadrements.length === 0 && <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>Aucun étudiant encadré</span>}
-                  {detail.encadrements.map((enc) => (
+                  {encadrementsFiltres.length === 0 && <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>{detail.encadrements.length === 0 ? 'Aucun étudiant encadré' : 'Aucun étudiant encadré sur cette période'}</span>}
+                  {encadrementsFiltres.map((enc) => (
                     <div key={enc.id_encadrement} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
                       <div>
                         <b>{enc.nom_etudiant}</b>
@@ -2110,12 +2166,12 @@ function ProfesseurDetail({ professeur, onClose, showToast }) {
               </div>
 
               {Object.keys(ACTIVITE_LABELS).map((type) => {
-                const list = detail[type] || []
+                const list = (detail[type] || []).filter((a) => estDansPeriode(a.date_activite, filtreAnnee, filtreSemestre))
                 return (
                   <div className="field full" key={type}>
                     <label>{ACTIVITE_LABELS[type]} ({list.length})</label>
                     <div style={{ marginTop: 4 }}>
-                      {list.length === 0 && <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>Aucune entrée</span>}
+                      {list.length === 0 && <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>Aucune entrée sur cette période</span>}
                       {list.map((a) => (
                         <div key={a.id_activite} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
                           <div>
@@ -2343,7 +2399,7 @@ function ModuleNiveauEditor({ label, items, onChange, disabled }) {
   )
 }
 
-function VoeuxPedagogiques({ showToast, teams }) {
+function VoeuxPedagogiques({ showToast, teams, filtreAnnee, filtreSemestre }) {
   const [campagnes, setCampagnes] = useState([])
   const [loading, setLoading] = useState(true)
   const [selectedId, setSelectedId] = useState(null)
@@ -2377,6 +2433,21 @@ function VoeuxPedagogiques({ showToast, teams }) {
 
   useEffect(() => { refresh(false) }, [refresh])
 
+  // Le filtre Année/Semestre du haut de page doit piloter QUELLE campagne est
+  // affichée/gérée ici, pas seulement afficher un avertissement : dès qu'il change
+  // (ou que la liste de campagnes vient de se charger), on bascule automatiquement
+  // sur la campagne dont la date de création correspond à cette période, si elle
+  // existe. Si aucune campagne ne correspond, on garde la sélection actuelle (l'alerte
+  // ci-dessous prévient déjà l'admin, qui peut ouvrir l'historique pour choisir manuellement).
+  useEffect(() => {
+    if (campagnes.length === 0) return
+    const correspondante = campagnes.find((c) => estDansPeriode(c.date_creation, filtreAnnee, filtreSemestre))
+    if (correspondante && correspondante.id_campagne !== selectedId) {
+      setSelectedId(correspondante.id_campagne)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtreAnnee, filtreSemestre, campagnes])
+
   const selected = campagnes.find((c) => c.id_campagne === selectedId) || null
 
   useEffect(() => {
@@ -2397,9 +2468,12 @@ function VoeuxPedagogiques({ showToast, teams }) {
       .finally(() => setLoadingReponses(false))
   }, [selected?.id_campagne, selected?.statut, showToast])
 
-  const filteredReponses = filtreEquipe === 'all'
-    ? reponses
-    : reponses.filter((r) => (r.sous_equipes || []).some((se) => String(se.id) === String(filtreEquipe)))
+  // Une réponse ne reste visible que si elle a elle-même été soumise dans la
+  // période sélectionnée (et pas seulement la campagne à laquelle elle appartient) :
+  // changer l'année/semestre doit faire disparaître les réponses d'une autre période.
+  const filteredReponses = reponses
+    .filter((r) => estDansPeriode(r.date_soumission, filtreAnnee, filtreSemestre))
+    .filter((r) => (filtreEquipe === 'all' ? true : (r.sous_equipes || []).some((se) => String(se.id) === String(filtreEquipe))))
 
   // Regroupe les réponses par module souhaité (Q1) — un collaborateur ayant
   // souhaité plusieurs modules apparaît dans chacun des groupes correspondants.
@@ -2469,6 +2543,11 @@ function VoeuxPedagogiques({ showToast, teams }) {
         <div>
           <h2>Vœux pédagogiques</h2>
           <p>Questionnaire à 8 questions envoyé à tous les collaborateurs. Les questions sont fixes ; vous gérez ici uniquement les modules proposés en réponse, campagne par campagne.</p>
+          {selected?.date_creation && !estDansPeriode(selected.date_creation, filtreAnnee, filtreSemestre) && (
+            <p style={{ color: 'var(--amber, #B45309)', fontSize: 12.5, marginTop: 4 }}>
+              La campagne active a été créée hors de la période sélectionnée ({filtreAnnee} · {filtreSemestre === 'S1' ? 'Semestre 1' : 'Semestre 2'}). Ouvrez l'historique pour choisir une campagne de cette période.
+            </p>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
           {campagnes.length > 0 && (
@@ -2664,6 +2743,8 @@ function VoeuxPedagogiques({ showToast, teams }) {
           selectedId={selectedId}
           onSelect={(id) => { setSelectedId(id); setHistoriqueOpen(false) }}
           onClose={() => setHistoriqueOpen(false)}
+          filtreAnnee={filtreAnnee}
+          filtreSemestre={filtreSemestre}
         />
       )}
     </>
@@ -2720,17 +2801,32 @@ function VoeuxChoixModal({
   )
 }
 
-function VoeuxCampagnesHistorique({ campagnes, selectedId, onSelect, onClose }) {
+function VoeuxCampagnesHistorique({ campagnes, selectedId, onSelect, onClose, filtreAnnee, filtreSemestre }) {
+  const [showAll, setShowAll] = useState(false)
+  const campagnesAffichees = showAll
+    ? campagnes
+    : campagnes.filter((c) => estDansPeriode(c.date_creation, filtreAnnee, filtreSemestre))
+
   return (
     <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
       <div className="modal-card" style={{ maxWidth: 520, padding: 0, overflow: 'hidden' }}>
         <div style={{ padding: '24px 24px 0' }}>
           <button type="button" className="modal-close" onClick={onClose} aria-label="Fermer">×</button>
           <div className="modal-title">Historique des campagnes</div>
-          <div className="modal-sub">{campagnes.length} campagne(s) — cliquez pour ouvrir</div>
+          <div className="modal-sub">
+            {campagnesAffichees.length} campagne(s){!showAll && ` · ${filtreAnnee} · ${filtreSemestre === 'S1' ? 'Semestre 1' : 'Semestre 2'}`}
+            {' — '}
+            <button
+              type="button"
+              onClick={() => setShowAll((v) => !v)}
+              style={{ background: 'none', border: 'none', color: 'var(--blue, #3B82F6)', cursor: 'pointer', padding: 0, textDecoration: 'underline', fontSize: 'inherit' }}
+            >
+              {showAll ? 'Filtrer par période sélectionnée' : 'Voir toutes les périodes'}
+            </button>
+          </div>
         </div>
         <div className="list" style={{ maxHeight: 440, overflowY: 'auto', marginTop: 12 }}>
-          {campagnes.map((c) => (
+          {campagnesAffichees.map((c) => (
             <div
               className="list-item"
               key={c.id_campagne}
@@ -2746,6 +2842,9 @@ function VoeuxCampagnesHistorique({ campagnes, selectedId, onSelect, onClose }) 
               </div>
             </div>
           ))}
+          {campagnesAffichees.length === 0 && (
+            <div className="list-item"><div className="body"><div className="desc">Aucune campagne sur cette période</div></div></div>
+          )}
         </div>
       </div>
     </div>
@@ -3020,7 +3119,13 @@ function AffectationForm({ reponse: r, onAffecte, showToast }) {
 }
 
 /* ================= ÉVALUATION ================= */
-function Evaluation({ teams, horsUpTeams, showToast }) {
+// Mêmes garde-fous que côté backend (voir PLAFOND_NOTE_MANUELLE / JUSTIFICATION_MIN_LENGTH
+// dans evaluationScore.model.js) — dupliqués ici uniquement pour l'affichage (placeholder,
+// max de l'input, longueur du hint) ; la validation qui fait foi reste côté serveur.
+const PLAFOND_NOTE_MANUELLE = 15
+const JUSTIFICATION_MIN_LENGTH = 20
+
+function Evaluation({ teams, horsUpTeams, showToast, filtreAnnee, filtreSemestre }) {
   const [criteria, setCriteria] = useState([])
   const [total, setTotal] = useState(0)
   const [teamId, setTeamId] = useState(null)
@@ -3029,6 +3134,7 @@ function Evaluation({ teams, horsUpTeams, showToast }) {
   const [calculating, setCalculating] = useState(false)
   const [expandedScore, setExpandedScore] = useState(null)
   const [noteEdits, setNoteEdits] = useState({}) // { [id_collaborateur]: { [id_critere]: note } }
+  const [justificationEdits, setJustificationEdits] = useState({}) // { [id_collaborateur]: { [id_critere]: texte } }
   const [membres, setMembres] = useState([]) // [{ id_collaborateur, nom }] pour l'équipe courante
   const [notingCritereId, setNotingCritereId] = useState(null) // critère personnalisé actuellement déplié pour notation
 
@@ -3065,16 +3171,23 @@ function Evaluation({ teams, horsUpTeams, showToast }) {
         setMembres(data.grille || [])
         const customIds = new Set((data.criteres || []).filter((c) => !c.code).map((c) => c.id_critere))
         const edits = {}
+        const justifs = {}
         ;(data.grille || []).forEach((m) => {
           const custom = {}
+          const customJustifs = {}
           Object.entries(m.notes || {}).forEach(([idCritere, value]) => {
             if (customIds.has(Number(idCritere)) && value !== null && value !== undefined) {
               custom[idCritere] = value
             }
           })
+          Object.entries(m.justifications || {}).forEach(([idCritere, texte]) => {
+            if (customIds.has(Number(idCritere))) customJustifs[idCritere] = texte
+          })
           edits[m.id_collaborateur] = custom
+          justifs[m.id_collaborateur] = customJustifs
         })
         setNoteEdits(edits)
+        setJustificationEdits(justifs)
       })
       .catch((err) => console.error(err))
   }, [teamId, teamType])
@@ -3124,6 +3237,7 @@ function Evaluation({ teams, horsUpTeams, showToast }) {
       loadGrille()
     } catch (err) {
       console.error(err)
+      showToast(err?.response?.data?.message || 'Erreur lors de la suppression du critère')
     }
   }
 
@@ -3134,22 +3248,41 @@ function Evaluation({ teams, horsUpTeams, showToast }) {
     }))
   }
 
+  const updateJustification = (idCollaborateur, idCritere, value) => {
+    setJustificationEdits((prev) => ({
+      ...prev,
+      [idCollaborateur]: { ...prev[idCollaborateur], [idCritere]: value },
+    }))
+  }
+
   const appliquer = async () => {
     if (total !== 100) { showToast(`Le total des pondérations doit être égal à 100% (actuellement ${total}%)`); return }
     if (!teamId) { showToast('Sélectionnez une équipe'); return }
     setCalculating(true)
     try {
-      // noteEdits ne contient que les notes des critères personnalisés, saisies
-      // manuellement ci-dessous — les critères connectés (basés sur les tâches)
-      // sont toujours recalculés côté serveur à partir des données réelles.
-      await calculerScores(teamId, noteEdits, teamType)
+      // Pour chaque critère personnalisé noté manuellement, le serveur exige une note ET
+      // une justification écrite (voir JUSTIFICATION_MIN_LENGTH côté backend) — on
+      // combine les deux ici dans le format attendu par calculerScoresEquipe. Les
+      // critères connectés (basés sur les tâches / activité école) sont toujours
+      // recalculés côté serveur à partir des données réelles, quoi qu'on envoie ici.
+      const payload = {}
+      Object.entries(noteEdits).forEach(([idCollaborateur, notesParCritere]) => {
+        payload[idCollaborateur] = {}
+        Object.entries(notesParCritere).forEach(([idCritere, note]) => {
+          payload[idCollaborateur][idCritere] = {
+            note,
+            justification: justificationEdits[idCollaborateur]?.[idCritere] || '',
+          }
+        })
+      })
+      await calculerScores(teamId, payload, teamType, filtreAnnee, filtreSemestre)
       showToast('Formule appliquée — scores recalculés')
       const data = await getScores({ sous_equipe: teamId, type: teamType })
       setScores(data)
       loadGrille()
     } catch (err) {
       console.error(err)
-      showToast('Erreur lors du calcul des scores')
+      showToast(err?.response?.data?.message || 'Erreur lors du calcul des scores')
     } finally {
       setCalculating(false)
     }
@@ -3177,7 +3310,9 @@ function Evaluation({ teams, horsUpTeams, showToast }) {
                   <b contentEditable suppressContentEditableWarning onBlur={(e) => renameCritere(c, e.target.textContent)}>{c.nom}</b>
                   <span>
                     <input className="pond-input" type="number" min="0" max="100" value={c.ponderation} onChange={(e) => setValue(c, e.target.value)} />%
-                    <button className="btn btn-ghost btn-sm" style={{ marginLeft: 6 }} onClick={() => supprimerCritere(c)}>✕</button>
+                    {!c.code && (
+                      <button className="btn btn-ghost btn-sm" style={{ marginLeft: 6 }} onClick={() => supprimerCritere(c)}>✕</button>
+                    )}
                   </span>
                 </div>
                 <input
@@ -3191,7 +3326,7 @@ function Evaluation({ teams, horsUpTeams, showToast }) {
                   <>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
                       <span style={{ fontSize: 10.5, color: 'var(--amber)' }}>
-                        Critère personnalisé — sans source automatique
+                        Critère personnalisé — note manuelle plafonnée à {PLAFOND_NOTE_MANUELLE}/20, justification obligatoire
                       </span>
                       <button
                         type="button"
@@ -3204,21 +3339,43 @@ function Evaluation({ teams, horsUpTeams, showToast }) {
                     </div>
                     {notingCritereId === c.id_critere && (
                       <div style={{ marginTop: 8, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
-                        {membres.map((m) => (
-                          <div key={m.id_collaborateur} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
-                            <div className="name-cell"><div className="avatar sm">{initials(m.nom)}</div><span className="n">{m.nom}</span></div>
-                            <input
-                              type="number"
-                              min="0"
-                              max="20"
-                              step="0.5"
-                              placeholder="—/20"
-                              className="pond-input"
-                              value={noteEdits[m.id_collaborateur]?.[c.id_critere] ?? ''}
-                              onChange={(e) => updateNote(m.id_collaborateur, c.id_critere, e.target.value)}
-                            />
-                          </div>
-                        ))}
+                        {membres.map((m) => {
+                          const justif = justificationEdits[m.id_collaborateur]?.[c.id_critere] || ''
+                          const justifTropCourte = justif.length > 0 && justif.length < JUSTIFICATION_MIN_LENGTH
+                          return (
+                            <div key={m.id_collaborateur} style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
+                                <div className="name-cell"><div className="avatar sm">{initials(m.nom)}</div><span className="n">{m.nom}</span></div>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max={PLAFOND_NOTE_MANUELLE}
+                                  step="0.5"
+                                  placeholder={`—/${PLAFOND_NOTE_MANUELLE}`}
+                                  className="pond-input"
+                                  value={noteEdits[m.id_collaborateur]?.[c.id_critere] ?? ''}
+                                  onChange={(e) => updateNote(m.id_collaborateur, c.id_critere, e.target.value)}
+                                />
+                              </div>
+                              <textarea
+                                placeholder={`Justification obligatoire (min. ${JUSTIFICATION_MIN_LENGTH} caractères) — pourquoi cette note ?`}
+                                rows={2}
+                                style={{
+                                  width: '100%', marginTop: 6, fontFamily: 'Inter', fontSize: 11.5,
+                                  padding: '6px 8px', borderRadius: 'var(--radius-sm)',
+                                  border: `1px solid ${justifTropCourte ? 'var(--red)' : 'var(--border)'}`, resize: 'vertical',
+                                }}
+                                value={justif}
+                                onChange={(e) => updateJustification(m.id_collaborateur, c.id_critere, e.target.value)}
+                              />
+                              {justifTropCourte && (
+                                <div style={{ fontSize: 10, color: 'var(--red)', marginTop: 2 }}>
+                                  Encore {JUSTIFICATION_MIN_LENGTH - justif.length} caractère(s) minimum
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
                         {membres.length === 0 && (
                           <div style={{ padding: 12, color: 'var(--text-faint)', fontSize: 12 }}>Aucun membre dans cette équipe</div>
                         )}
@@ -3775,22 +3932,6 @@ function MonProfilAdmin({ user, updateUser, showToast, dark, onToggleDark, param
     }
   }
 
-  /* ---------- Automatisation (réglages système, conservés depuis l'ancienne page Paramètres) ---------- */
-  const patchParams = async (payload) => {
-    try {
-      await updateParametres(payload)
-      onChangedParams?.()
-    } catch (err) {
-      console.error(err)
-      showToast?.('Erreur lors de la mise à jour des paramètres')
-    }
-  }
-  const automation = [
-    { key: 'mail_verification_auto', t: 'Génération automatique du mail de vérification', d: "Envoie la vérification dès la demande, avec le contact fourni par le collaborateur — sans attendre que le Super Admin le complète manuellement" },
-    { key: 'validation_auto', t: 'Validation automatique après confirmation', d: "Intègre la tâche au dossier dès le clic sur le lien de confirmation ; désactivé, la confirmation reste en attente d'une validation manuelle" },
-    { key: 'sauvegarde_auto', t: 'Sauvegarde automatique quotidienne', d: "Lance une sauvegarde complète de la base chaque nuit à 2h ; désactivé, seule la sauvegarde manuelle (page Sauvegardes) reste disponible" },
-  ]
-
   return (
     <>
       <div className="page-head">
@@ -3873,18 +4014,6 @@ function MonProfilAdmin({ user, updateUser, showToast, dark, onToggleDark, param
               </div>
             )}
           </div>
-
-          {params && (
-            <div className="card" style={{ marginTop: 16 }}>
-              <div className="card-head"><div><h2>Automatisation</h2><div className="hint">Comportement du processus de validation</div></div></div>
-              {automation.map((row) => (
-                <div className="toggle-row" key={row.key}>
-                  <div><div className="t">{row.t}</div><div className="d">{row.d}</div></div>
-                  <label className="switch"><input type="checkbox" checked={!!params[row.key]} onChange={() => patchParams({ [row.key]: !params[row.key] })} /><span className="slider" /></label>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
         <div>
           <div className="card">

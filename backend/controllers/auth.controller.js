@@ -22,7 +22,7 @@ import {
 } from '../models/collaborateur.model.js'
 import { signToken, verifyToken } from '../utils/jwt.js'
 import { verifyCaptcha } from '../utils/verifyCaptcha.js'
-import { sendResetCodeEmail } from '../utils/Mailer.js'
+import { sendResetCodeEmail, sendWelcomeEmail } from '../utils/Mailer.js'
 import crypto from 'crypto'
 
 const ROLES = ['admin', 'responsable', 'collaborateur']
@@ -138,6 +138,8 @@ export async function signup(req, res) {
         identifiant_esprit,
         mot_de_passe: hashed,
       })
+      sendWelcomeEmail({ to: email, nom: fullName, identifiant: identifiant_esprit, role: 'admin' })
+        .catch((err) => console.error('Erreur envoi email de bienvenue:', err))
       const token = signToken({ id: newAdmin.id_admin, role })
       return res.status(201).json({ token, role, user: newAdmin })
     }
@@ -153,6 +155,8 @@ export async function signup(req, res) {
         identifiant_esprit,
         mot_de_passe: hashed,
       })
+      sendWelcomeEmail({ to: email, nom: fullName, identifiant: identifiant_esprit, role: 'responsable' })
+        .catch((err) => console.error('Erreur envoi email de bienvenue:', err))
       const token = signToken({ id: newResponsable.id_responsable, role })
       return res.status(201).json({ token, role, user: newResponsable })
     }
@@ -171,6 +175,8 @@ export async function signup(req, res) {
     if (Array.isArray(sousEquipeIds) && sousEquipeIds.length > 0) {
       await addCollaborateurToSousEquipes(newCollaborateur.id_collaborateur, sousEquipeIds)
     }
+    sendWelcomeEmail({ to: email, nom: fullName, identifiant: identifiant_esprit, role: 'collaborateur' })
+      .catch((err) => console.error('Erreur envoi email de bienvenue:', err))
     const token = signToken({ id: newCollaborateur.id_collaborateur, role })
     res.status(201).json({ token, role, user: newCollaborateur })
   } catch (err) {

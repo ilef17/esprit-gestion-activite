@@ -134,106 +134,199 @@ export async function buildReportData(idSousEquipe, idCollaborateur, periode) {
 }
 
 const RED = '#E4032E'
+const RED_DEEP = '#9C0119'
 const TEXT = '#1D1D2B'
 const MUTED = '#767A8A'
+const FAINT = '#A6A9B4'
 const BORDER = '#ECEDF2'
+const TINT = '#FCE9EB'
+const TINT_SOFT = '#FBF7F8'
 const GREEN = '#1FAE63'
+const GREEN_TINT = '#E7F8EF'
 const RED_DARK = '#B30224'
 
 const SEMESTRE_LABELS = { S1: 'Semestre 1', S2: 'Semestre 2', annuel: 'Année complète' }
 
+// Petite pastille arrondie pleine largeur de texte (ex. "82%"), fond + texte assortis
+// selon la couleur donnée — remplace le texte simplement coloré de l'ancienne version
+// pour un rendu plus soigné, proche d'un badge d'interface plutôt que d'un tableau brut.
+function drawPill(doc, text, x, y, { color, tint, width, fontSize = 9.5 } = {}) {
+  const w = width ?? doc.widthOfString(text, { font: 'Helvetica-Bold', fontSize }) + 18
+  const h = fontSize + 9
+  doc.roundedRect(x, y, w, h, h / 2).fill(tint)
+  doc.font('Helvetica-Bold').fontSize(fontSize).fillColor(color)
+    .text(text, x, y + h / 2 - fontSize / 2 + 0.5, { width: w, align: 'center' })
+  return w
+}
+
+// Mini barre de progression horizontale (note /20) — donne une lecture immédiate des
+// scores sans avoir à comparer des nombres, dans l'esprit d'un tableau de bord plutôt
+// que d'une simple liste.
+function drawScoreBar(doc, x, y, width, ratio, color) {
+  const h = 6
+  doc.roundedRect(x, y, width, h, h / 2).fill(BORDER)
+  const filled = Math.max(h, width * Math.max(0, Math.min(1, ratio)))
+  doc.roundedRect(x, y, filled, h, h / 2).fill(color)
+}
+
 export function genererPdf(data, filePath) {
   ensureReportsDir()
   return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 0, size: 'A4' })
+    const doc = new PDFDocument({ margin: 0, size: 'A4', bufferPages: true })
     const stream = fs.createWriteStream(filePath)
     doc.pipe(stream)
 
     const pageWidth = doc.page.width
-    const marginX = 40
+    const pageHeight = doc.page.height
+    const marginX = 44
+    const contentWidth = pageWidth - marginX * 2
 
-    // ---------- Bandeau rouge (logo directement dessus, fond transparent — pas de carte blanche) ----------
-    const bannerHeight = 90
-    doc.rect(0, 0, pageWidth, bannerHeight).fill(RED)
-    doc.image(ESPRIT_LOGO_BUFFER, marginX, 24, { fit: [130, 42], align: 'center', valign: 'center' })
-    doc.fillColor('rgba(255,255,255,0.9)').font('Helvetica-Bold').fontSize(9)
-      .text('GESTION DES ACTIVITÉS', marginX + 145, 45, { characterSpacing: 1 })
+    // ---------- Bandeau : dégradé profond + cercle décoratif discret ----------
+    const bannerHeight = 108
+    const gradient = doc.linearGradient(0, 0, pageWidth, bannerHeight)
+    gradient.stop(0, RED_DEEP).stop(1, RED)
+    doc.rect(0, 0, pageWidth, bannerHeight).fill(gradient)
+    // Cercle décoratif très subtil, à moitié hors-cadre — apporte du relief au bandeau
+    // sans distraire du logo ni du titre.
+    doc.save()
+    doc.circle(pageWidth - 60, 20, 90).fillOpacity(0.06).fill('#FFFFFF')
+    doc.restore()
+
+    doc.image(ESPRIT_LOGO_BUFFER, marginX, 30, { fit: [125, 40] })
+    doc.fillColor('rgba(255,255,255,0.92)').font('Helvetica-Bold').fontSize(8.5)
+      .text('GESTION DES ACTIVITÉS', marginX, 78, { characterSpacing: 1.4 })
+    // Fine ligne dorée sous le bandeau : sépare nettement l'en-tête institutionnel du
+    // contenu du rapport, touche discrète mais soignée.
+    doc.rect(0, bannerHeight, pageWidth, 3).fill('#F2B84B')
 
     // ---------- Titre + sous-titre ----------
-    let y = bannerHeight + 32
+    let y = bannerHeight + 34
     const titre = data.sousEquipeNom === 'Toutes les sous-équipes'
-      ? 'Rapport global'
-      : `Rapport — ${data.sousEquipeNom}`
-    doc.fillColor(TEXT).font('Helvetica-Bold').fontSize(20).text(titre, marginX, y)
-    y = doc.y + 4
+      ? 'Rapport global d\'activité'
+      : `Rapport d'activité — ${data.sousEquipeNom}`
+    doc.fillColor(TEXT).font('Helvetica-Bold').fontSize(21).text(titre, marginX, y, { width: contentWidth })
+    y = doc.y + 5
     const semestreLabel = SEMESTRE_LABELS[data.semestre] || data.semestre
-    const sousTitre = `${semestreLabel} · ${data.annee_universitaire}` + (data.collaborateurNom ? ` · ${data.collaborateurNom}` : '')
-    doc.fillColor(MUTED).font('Helvetica').fontSize(11).text(sousTitre, marginX, y)
-    y = doc.y + 18
+    const sousTitre = `${semestreLabel} · Année universitaire ${data.annee_universitaire}` + (data.collaborateurNom ? ` · ${data.collaborateurNom}` : '')
+    doc.fillColor(MUTED).font('Helvetica-Oblique').fontSize(11).text(sousTitre, marginX, y, { width: contentWidth })
+    y = doc.y + 26
 
-    // ---------- Résumé : N collaborateurs · taux de réussite moyen ----------
+    // ---------- Chiffres clés : trois cartes (collaborateurs / taux moyen / période) ----------
     const nb = data.lignes.length
     const taux = data.lignes.map((l) => (l.taches_total > 0 ? (l.validees / l.taches_total) * 100 : 0))
     const moyenne = nb > 0 ? Math.round(taux.reduce((a, b) => a + b, 0) / nb) : 0
-    doc.font('Helvetica-Bold').fontSize(11).fillColor(TEXT)
-      .text(`${nb} collaborateur${nb > 1 ? 's' : ''}`, marginX, y, { continued: true })
-      .font('Helvetica').fillColor(MUTED).text('  ·  ', { continued: true })
-      .font('Helvetica-Bold').fillColor(TEXT).text(`taux de réussite moyen : `, { continued: true })
-      .fillColor(moyenne >= 50 ? GREEN : RED_DARK).text(`${moyenne}%`)
-    y = doc.y + 18
+    const totalTaches = data.lignes.reduce((s, l) => s + l.taches_total, 0)
+
+    const cardGap = 14
+    const cardW = (contentWidth - cardGap * 2) / 3
+    const cardH = 64
+    const stats = [
+      { label: 'COLLABORATEUR' + (nb > 1 ? 'S' : ''), value: String(nb) },
+      { label: 'TAUX DE RÉUSSITE MOYEN', value: `${moyenne}%`, accent: moyenne >= 50 ? GREEN : RED_DARK },
+      { label: 'TÂCHES SUIVIES', value: String(totalTaches) },
+    ]
+    stats.forEach((s, i) => {
+      const x = marginX + i * (cardW + cardGap)
+      doc.roundedRect(x, y, cardW, cardH, 10).fillAndStroke(TINT_SOFT, BORDER)
+      doc.font('Helvetica-Bold').fontSize(22).fillColor(s.accent || TEXT)
+        .text(s.value, x + 16, y + 12, { width: cardW - 32 })
+      doc.font('Helvetica-Bold').fontSize(7.5).fillColor(MUTED)
+        .text(s.label, x + 16, y + cardH - 22, { width: cardW - 32, characterSpacing: 0.4 })
+    })
+    y += cardH + 30
 
     // ---------- Tableau : Collaborateur | Validées | Totales | Taux ----------
+    const tableTop = y
     const cols = [
-      { x: marginX, w: 220, key: 'nom', label: 'COLLABORATEUR', align: 'left' },
-      { x: marginX + 220, w: 100, key: 'validees', label: 'VALIDÉES', align: 'left' },
-      { x: marginX + 320, w: 100, key: 'taches_total', label: 'TOTALES', align: 'left' },
-      { x: marginX + 420, w: 95, key: 'taux', label: 'TAUX', align: 'left' },
+      { x: marginX + 18, w: 210, key: 'nom', label: 'COLLABORATEUR' },
+      { x: marginX + 230, w: 90, key: 'validees', label: 'VALIDÉES' },
+      { x: marginX + 320, w: 90, key: 'taches_total', label: 'TOTALES' },
+      { x: marginX + 410, w: 90, key: 'taux', label: 'TAUX' },
     ]
+    const rowHeight = 30
 
-    const drawHeader = (yy) => {
-      doc.font('Helvetica-Bold').fontSize(8.5).fillColor(MUTED)
-      cols.forEach((col) => doc.text(col.label, col.x, yy, { width: col.w, characterSpacing: 0.5 }))
-      const lineY = yy + 16
-      doc.moveTo(marginX, lineY).lineTo(pageWidth - marginX, lineY).strokeColor(BORDER).stroke()
-      return lineY + 12
+    const drawTableHeader = (yy) => {
+      doc.roundedRect(marginX, yy, contentWidth, 30, 8).fill(TINT)
+      doc.font('Helvetica-Bold').fontSize(8.2).fillColor(RED_DEEP)
+      cols.forEach((col) => doc.text(col.label, col.x, yy + 11, { width: col.w, characterSpacing: 0.6 }))
+      return yy + 30
     }
 
-    y = drawHeader(y)
+    y = drawTableHeader(tableTop)
 
-    doc.font('Helvetica').fontSize(10.5)
+    doc.font('Helvetica').fontSize(10)
     data.lignes.forEach((ligne, i) => {
-      if (y > 760) {
+      if (y + rowHeight > pageHeight - 70) {
         doc.addPage()
-        y = 40
-        y = drawHeader(y)
+        y = 44
+        y = drawTableHeader(y)
       }
+      if (i % 2 === 1) doc.rect(marginX, y, contentWidth, rowHeight).fill(TINT_SOFT)
       const t = ligne.taches_total > 0 ? Math.round((ligne.validees / ligne.taches_total) * 100) : 0
-      doc.fillColor(TEXT).font('Helvetica-Bold').text(ligne.nom, cols[0].x, y, { width: cols[0].w })
-      doc.font('Helvetica').text(String(ligne.validees), cols[1].x, y, { width: cols[1].w })
-      doc.text(String(ligne.taches_total), cols[2].x, y, { width: cols[2].w })
-      doc.font('Helvetica-Bold').fillColor(t >= 50 ? GREEN : RED_DARK).text(`${t}%`, cols[3].x, y, { width: cols[3].w })
-      y += 26
+      const rowMidY = y + rowHeight / 2 - 6
+
+      doc.fillColor(TEXT).font('Helvetica-Bold').fontSize(10.5)
+        .text(ligne.nom, cols[0].x, rowMidY, { width: cols[0].w })
+      doc.font('Helvetica').fontSize(10).fillColor(TEXT)
+        .text(String(ligne.validees), cols[1].x, rowMidY, { width: cols[1].w })
+      doc.text(String(ligne.taches_total), cols[2].x, rowMidY, { width: cols[2].w })
+      drawPill(doc, `${t}%`, cols[3].x, y + rowHeight / 2 - 10.5, {
+        color: t >= 50 ? GREEN : RED_DARK,
+        tint: t >= 50 ? GREEN_TINT : TINT,
+        width: 52,
+      })
+      doc.moveTo(marginX + 18, y + rowHeight).lineTo(pageWidth - marginX - 18, y + rowHeight).strokeColor(BORDER).lineWidth(0.5).stroke()
+      y += rowHeight
     })
 
     if (data.lignes.length === 0) {
-      doc.font('Helvetica').fontSize(10).fillColor(MUTED).text('Aucun collaborateur concerné par ce rapport.', marginX, y)
-      y = doc.y + 10
+      doc.font('Helvetica-Oblique').fontSize(10).fillColor(MUTED)
+        .text('Aucun collaborateur concerné par ce rapport.', marginX, y + 14)
+      y += 34
     }
 
+    // ---------- Scores calculés : carte dédiée avec mini barres de progression ----------
     const withScore = data.lignes.filter((l) => l.score !== null)
     if (withScore.length > 0) {
-      y += 14
-      doc.font('Helvetica-Bold').fontSize(10.5).fillColor(TEXT).text('Scores calculés (activités hors-équipe validées incluses)', marginX, y)
-      y = doc.y + 6
-      doc.font('Helvetica').fontSize(9.5)
+      y += 26
+      if (y + 40 + withScore.length * 26 > pageHeight - 70) {
+        doc.addPage()
+        y = 44
+      }
+      doc.font('Helvetica-Bold').fontSize(12).fillColor(TEXT)
+        .text('Scores calculés', marginX, y)
+      doc.font('Helvetica-Oblique').fontSize(8.5).fillColor(FAINT)
+        .text('activités hors-équipe validées incluses', marginX + 108, y + 2.5)
+      y = doc.y + 12
+
       withScore.forEach((l) => {
-        doc.fillColor(TEXT).text(`${l.nom} — ${l.score}/20  (${l.hors_equipe_validees} activité${l.hors_equipe_validees > 1 ? 's' : ''} hors-équipe validée${l.hors_equipe_validees > 1 ? 's' : ''})`, marginX, y)
-        y = doc.y + 2
+        if (y + 26 > pageHeight - 70) {
+          doc.addPage()
+          y = 44
+        }
+        const ratio = Number(l.score) / 20
+        const barColor = ratio >= 0.5 ? GREEN : RED_DARK
+        doc.font('Helvetica-Bold').fontSize(10).fillColor(TEXT)
+          .text(l.nom, marginX + 18, y, { width: 170 })
+        drawScoreBar(doc, marginX + 200, y + 5, 200, ratio, barColor)
+        doc.font('Helvetica-Bold').fontSize(10).fillColor(barColor)
+          .text(`${l.score}/20`, marginX + 412, y - 1, { width: 50 })
+        doc.font('Helvetica').fontSize(8.5).fillColor(FAINT)
+          .text(`${l.hors_equipe_validees} activité${l.hors_equipe_validees > 1 ? 's' : ''} hors-équipe`, marginX + 470, y, { width: contentWidth - 470 })
+        y += 26
       })
     }
 
-    doc.font('Helvetica').fontSize(7.5).fillColor('#A6A9B4')
-      .text(`Généré le ${new Date().toLocaleDateString('fr-FR')} — ESPRIT · Gestion des Activités`, marginX, doc.page.height - 30)
+    // ---------- Pied de page (numéro inclus) sur chaque page ----------
+    const range = doc.bufferedPageRange()
+    for (let i = range.start; i < range.start + range.count; i++) {
+      doc.switchToPage(i)
+      const footerY = pageHeight - 46
+      doc.moveTo(marginX, footerY).lineTo(pageWidth - marginX, footerY).strokeColor(BORDER).lineWidth(0.75).stroke()
+      doc.font('Helvetica').fontSize(7.8).fillColor(FAINT)
+        .text(`Généré le ${new Date().toLocaleDateString('fr-FR')} — ESPRIT · Gestion des Activités`, marginX, footerY + 10)
+      doc.text(`Page ${i - range.start + 1} / ${range.count}`, pageWidth - marginX - 100, footerY + 10, { width: 100, align: 'right' })
+    }
 
     doc.end()
     stream.on('finish', resolve)

@@ -81,14 +81,19 @@ export async function deleteTache(id) {
   await pool.query('DELETE FROM tache WHERE id_tache = ?', [id])
 }
 
-// Tâches dont l'échéance tombe dans exactement 2 jours, pas encore validées, et pas
-// déjà rappelées — utilisé par le cron quotidien de rappel (voir server.js).
+// Tâches dont l'échéance tombe dans 2 jours ou moins (mais pas déjà passée), pas
+// encore validées, et pas déjà rappelées — utilisé par le cron quotidien de rappel
+// (voir server.js). Une comparaison en plage (et non une égalité stricte à J+2) est
+// nécessaire : une tâche créée avec une échéance déjà à J+1, ou dont le cron a raté
+// le jour J+2 (serveur down, etc.), doit quand même recevoir un rappel une fois
+// entrée dans la fenêtre, au lieu d'être silencieusement sautée pour toujours.
+// `rappel_echeance_envoye` évite tout double envoi entre deux exécutions.
 export async function getTachesEcheanceProche() {
   const [rows] = await pool.query(`
     SELECT t.*, c.nom AS collaborateur_nom, c.email AS collaborateur_email, c.notifications_email
     FROM tache t
     JOIN collaborateur c ON c.id_collaborateur = t.id_collaborateur
-    WHERE t.date_echeance = DATE_ADD(CURDATE(), INTERVAL 2 DAY)
+    WHERE t.date_echeance BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 2 DAY)
       AND t.statut != 'validee'
       AND t.rappel_echeance_envoye = 0
       AND t.id_collaborateur IS NOT NULL

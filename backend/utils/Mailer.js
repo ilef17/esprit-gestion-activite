@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer'
 import dotenv from 'dotenv'
+import { ESPRIT_LOGO_EMAIL_BASE64 } from './espritLogoBase64.js'
 
 dotenv.config()
 
@@ -32,6 +33,36 @@ const COLORS = {
   border: '#E7E8EF',
 }
 
+// Logo joint en pièce jointe "inline" (Content-ID) plutôt qu'en image data:URI.
+// Outlook (client de bureau, moteur de rendu Word) bloque/n'affiche pas les
+// images en data:URI dans le corps du mail. L'image jointe en CID est la
+// méthode fiable qui fonctionne à la fois sur Outlook, Gmail et les webmails.
+const ESPRIT_LOGO_CID = 'esprit-logo@esprit'
+const ESPRIT_LOGO_ATTACHMENT = {
+  filename: 'esprit-logo.png',
+  content: Buffer.from(ESPRIT_LOGO_EMAIL_BASE64, 'base64'),
+  cid: ESPRIT_LOGO_CID,
+  contentDisposition: 'inline',
+}
+
+// En-tête HTML commun (logo ESPRIT) réutilisé par tous les templates ci-dessous.
+// width/height explicites + display:block : évite les décalages de mise en page
+// et les bordures fantômes que certains clients (Outlook) ajoutent aux <img>.
+function headerRowHtml() {
+  return `
+          <tr>
+            <td style="background:${COLORS.red}; padding:24px 32px;">
+              <img
+                src="cid:${ESPRIT_LOGO_CID}"
+                width="150"
+                height="60"
+                alt="ESPRIT - Gestion des Activités"
+                style="display:block; border:0; outline:none; text-decoration:none; max-width:150px;"
+              />
+            </td>
+          </tr>`
+}
+
 function buildResetHtml({ identifiant, code }) {
   return `
 <!DOCTYPE html>
@@ -47,22 +78,7 @@ function buildResetHtml({ identifiant, code }) {
       <td align="center">
         <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px; width:100%; background:${COLORS.card}; border-radius:16px; overflow:hidden; box-shadow:0 8px 30px rgba(20,20,40,0.08);">
 
-          <!-- Header -->
-          <tr>
-            <td style="background:${COLORS.red}; padding:26px 32px;">
-              <table role="presentation" cellpadding="0" cellspacing="0">
-                <tr>
-                  <td style="width:34px; height:34px; background:rgba(255,255,255,0.18); border-radius:9px; text-align:center; vertical-align:middle;">
-                    <span style="color:#ffffff; font-size:18px;">&#8962;</span>
-                  </td>
-                  <td style="padding-left:10px; vertical-align:middle;">
-                    <div style="color:#ffffff; font-weight:800; font-size:17px; line-height:1.1;">esprit</div>
-                    <div style="color:rgba(255,255,255,0.85); font-size:9.5px; letter-spacing:1px; font-weight:700; text-transform:uppercase;">Gestion des Activités</div>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
+          <!-- Header -->${headerRowHtml()}
 
           <!-- Body -->
           <tr>
@@ -157,22 +173,7 @@ function buildDemandeHtml({ collaborateurNom, description, contexte, dateDebut, 
       <td align="center">
         <table role="presentation" width="520" cellpadding="0" cellspacing="0" style="max-width:520px; width:100%; background:${COLORS.card}; border-radius:16px; overflow:hidden; box-shadow:0 8px 30px rgba(20,20,40,0.08);">
 
-          <!-- Header -->
-          <tr>
-            <td style="background:${COLORS.red}; padding:26px 32px;">
-              <table role="presentation" cellpadding="0" cellspacing="0">
-                <tr>
-                  <td style="width:34px; height:34px; background:rgba(255,255,255,0.18); border-radius:9px; text-align:center; vertical-align:middle;">
-                    <span style="color:#ffffff; font-size:18px;">&#8962;</span>
-                  </td>
-                  <td style="padding-left:10px; vertical-align:middle;">
-                    <div style="color:#ffffff; font-weight:800; font-size:17px; line-height:1.1;">esprit</div>
-                    <div style="color:rgba(255,255,255,0.85); font-size:9.5px; letter-spacing:1px; font-weight:700; text-transform:uppercase;">Gestion des Activités</div>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
+          <!-- Header -->${headerRowHtml()}
 
           <!-- Body -->
           <tr>
@@ -253,6 +254,7 @@ export async function sendDemandeVerificationEmail({ to, collaborateurNom, descr
     subject: `Vérification requise — activité hors équipe de ${collaborateurNom}`,
     text: buildDemandeText(payload),
     html: buildDemandeHtml(payload),
+    attachments: [ESPRIT_LOGO_ATTACHMENT],
   })
 }
 
@@ -279,22 +281,7 @@ function buildDemandeStatutHtml({ collaborateurNom, description, statut }) {
       <td align="center">
         <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px; width:100%; background:${COLORS.card}; border-radius:16px; overflow:hidden; box-shadow:0 8px 30px rgba(20,20,40,0.08);">
 
-          <!-- Header -->
-          <tr>
-            <td style="background:${COLORS.red}; padding:26px 32px;">
-              <table role="presentation" cellpadding="0" cellspacing="0">
-                <tr>
-                  <td style="width:34px; height:34px; background:rgba(255,255,255,0.18); border-radius:9px; text-align:center; vertical-align:middle;">
-                    <span style="color:#ffffff; font-size:18px;">&#8962;</span>
-                  </td>
-                  <td style="padding-left:10px; vertical-align:middle;">
-                    <div style="color:#ffffff; font-weight:800; font-size:17px; line-height:1.1;">esprit</div>
-                    <div style="color:rgba(255,255,255,0.85); font-size:9.5px; letter-spacing:1px; font-weight:700; text-transform:uppercase;">Gestion des Activités</div>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
+          <!-- Header -->${headerRowHtml()}
 
           <!-- Body -->
           <tr>
@@ -375,6 +362,7 @@ export async function sendDemandeStatutEmail({ to, collaborateurNom, description
     subject: statut === 'validee' ? 'Votre activité hors équipe a été validée' : 'Votre activité hors équipe a été refusée',
     text: buildDemandeStatutText(payload),
     html: buildDemandeStatutHtml(payload),
+    attachments: [ESPRIT_LOGO_ATTACHMENT],
   })
 }
 
@@ -413,22 +401,7 @@ function buildAffectationHtml({ collaborateurNom, module, type, niveau, classes 
       <td align="center">
         <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px; width:100%; background:${COLORS.card}; border-radius:16px; overflow:hidden; box-shadow:0 8px 30px rgba(20,20,40,0.08);">
 
-          <!-- Header -->
-          <tr>
-            <td style="background:${COLORS.red}; padding:26px 32px;">
-              <table role="presentation" cellpadding="0" cellspacing="0">
-                <tr>
-                  <td style="width:34px; height:34px; background:rgba(255,255,255,0.18); border-radius:9px; text-align:center; vertical-align:middle;">
-                    <span style="color:#ffffff; font-size:18px;">&#8962;</span>
-                  </td>
-                  <td style="padding-left:10px; vertical-align:middle;">
-                    <div style="color:#ffffff; font-weight:800; font-size:17px; line-height:1.1;">esprit</div>
-                    <div style="color:rgba(255,255,255,0.85); font-size:9.5px; letter-spacing:1px; font-weight:700; text-transform:uppercase;">Gestion des Activités</div>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
+          <!-- Header -->${headerRowHtml()}
 
           <!-- Body -->
           <tr>
@@ -497,6 +470,7 @@ export async function sendAffectationEmail({ to, collaborateurNom, module, type,
     subject: `Votre affectation pédagogique — ${module}`,
     text: buildAffectationText(payload),
     html: buildAffectationHtml(payload),
+    attachments: [ESPRIT_LOGO_ATTACHMENT],
   })
 }
 
@@ -520,22 +494,7 @@ function buildTacheEcheanceHtml({ collaborateurNom, titre, dateEcheance }) {
       <td align="center">
         <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px; width:100%; background:${COLORS.card}; border-radius:16px; overflow:hidden; box-shadow:0 8px 30px rgba(20,20,40,0.08);">
 
-          <!-- Header -->
-          <tr>
-            <td style="background:${COLORS.red}; padding:26px 32px;">
-              <table role="presentation" cellpadding="0" cellspacing="0">
-                <tr>
-                  <td style="width:34px; height:34px; background:rgba(255,255,255,0.18); border-radius:9px; text-align:center; vertical-align:middle;">
-                    <span style="color:#ffffff; font-size:18px;">&#8962;</span>
-                  </td>
-                  <td style="padding-left:10px; vertical-align:middle;">
-                    <div style="color:#ffffff; font-weight:800; font-size:17px; line-height:1.1;">esprit</div>
-                    <div style="color:rgba(255,255,255,0.85); font-size:9.5px; letter-spacing:1px; font-weight:700; text-transform:uppercase;">Gestion des Activités</div>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
+          <!-- Header -->${headerRowHtml()}
 
           <!-- Body -->
           <tr>
@@ -606,6 +565,7 @@ export async function sendTacheEcheanceEmail({ to, collaborateurNom, titre, date
     subject: `Rappel — échéance dans 2 jours : ${titre}`,
     text: buildTacheEcheanceText(payload),
     html: buildTacheEcheanceHtml(payload),
+    attachments: [ESPRIT_LOGO_ATTACHMENT],
   })
 }
 
@@ -626,5 +586,197 @@ export async function sendResetCodeEmail({ to, identifiant, code }) {
     subject: 'Votre code de réinitialisation de mot de passe',
     text: buildResetText({ identifiant, code }),
     html: buildResetHtml({ identifiant, code }),
+    attachments: [ESPRIT_LOGO_ATTACHMENT],
+  })
+}
+
+const ROLE_LABELS = {
+  admin: 'Administrateur',
+  responsable: 'Responsable',
+  collaborateur: 'Collaborateur',
+}
+
+function buildWelcomeHtml({ nom, identifiant, role }) {
+  const roleLabel = ROLE_LABELS[role] || role
+
+  return `
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Bienvenue</title>
+</head>
+<body style="margin:0; padding:0; background:${COLORS.bg}; font-family:Arial, Helvetica, sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${COLORS.bg}; padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px; width:100%; background:${COLORS.card}; border-radius:16px; overflow:hidden; box-shadow:0 8px 30px rgba(20,20,40,0.08);">
+
+          <!-- Header -->${headerRowHtml()}
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:32px;">
+              <h1 style="margin:0 0 14px; font-size:18px; color:${COLORS.text};">Bienvenue, ${nom} 👋</h1>
+              <p style="margin:0 0 22px; font-size:13.5px; color:${COLORS.textMuted}; line-height:1.6;">
+                Votre compte <strong style="color:${COLORS.text};">${roleLabel}</strong> sur l'intranet ESPRIT · Gestion des Activités vient d'être créé avec succès.
+              </p>
+
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:22px;">
+                <tr>
+                  <td style="padding:14px; background:${COLORS.redTint}; border-radius:10px;">
+                    <div style="font-size:11.5px; color:${COLORS.textFaint}; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:2px;">Identifiant de connexion</div>
+                    <div style="font-size:15px; font-weight:700; color:${COLORS.redDark};">${identifiant}</div>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin:0; font-size:12.5px; color:${COLORS.textFaint}; line-height:1.6;">
+                Vous pouvez dès à présent vous connecter à votre espace ${roleLabel.toLowerCase()} avec cet identifiant et le mot de passe que vous avez choisi.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding:18px 32px; border-top:1px solid ${COLORS.border};">
+              <p style="margin:0; font-size:11px; color:${COLORS.textFaint}; text-align:center;">
+                Ceci est un e-mail automatique, merci de ne pas y répondre.<br />
+                — L'équipe ESPRIT · Gestion des Activités
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`.trim()
+}
+
+function buildWelcomeText({ nom, identifiant, role }) {
+  const roleLabel = ROLE_LABELS[role] || role
+  return (
+    `Bienvenue, ${nom} !\n\n` +
+    `Votre compte ${roleLabel} sur l'intranet ESPRIT · Gestion des Activités vient d'être créé avec succès.\n\n` +
+    `Identifiant de connexion : ${identifiant}\n\n` +
+    `Vous pouvez dès à présent vous connecter à votre espace ${roleLabel.toLowerCase()} avec cet identifiant et le mot de passe que vous avez choisi.\n\n` +
+    `— L'équipe ESPRIT · Gestion des Activités`
+  )
+}
+
+// Envoie l'e-mail de bienvenue juste après la création d'un compte (voir
+// auth.controller.js -> signup). Appelée sans "await" bloquant côté contrôleur
+// (fire-and-forget avec .catch) pour ne jamais faire échouer l'inscription si
+// l'envoi d'e-mail rencontre un problème.
+export async function sendWelcomeEmail({ to, nom, identifiant, role }) {
+  if (!to) return
+  if (!process.env.SMTP_HOST) {
+    console.log(`[mailer] SMTP non configuré — e-mail de bienvenue non envoyé à ${to}`)
+    return
+  }
+
+  const from = process.env.SMTP_FROM || '"ESPRIT · Gestion des Activités" <no-reply@esprit.local>'
+  const payload = { nom, identifiant, role }
+
+  await getTransporter().sendMail({
+    from,
+    to,
+    subject: 'Bienvenue sur — Gestion des Activités',
+    text: buildWelcomeText(payload),
+    html: buildWelcomeHtml(payload),
+    attachments: [ESPRIT_LOGO_ATTACHMENT],
+  })
+}
+
+function buildResponsableAssignationHtml({ responsableNom, equipeNom, typeEquipe }) {
+  return `
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Désignation responsable</title>
+</head>
+<body style="margin:0; padding:0; background:${COLORS.bg}; font-family:Arial, Helvetica, sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${COLORS.bg}; padding:32px 16px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="480" cellpadding="0" cellspacing="0" style="max-width:480px; width:100%; background:${COLORS.card}; border-radius:16px; overflow:hidden; box-shadow:0 8px 30px rgba(20,20,40,0.08);">
+
+          <!-- Header -->${headerRowHtml()}
+
+          <!-- Body -->
+          <tr>
+            <td style="padding:32px;">
+              <h1 style="margin:0 0 14px; font-size:18px; color:${COLORS.text};">Vous avez été désigné(e) responsable</h1>
+              <p style="margin:0 0 22px; font-size:13.5px; color:${COLORS.textMuted}; line-height:1.6;">
+                Bonjour <strong style="color:${COLORS.text};">${responsableNom}</strong>, l'administration vient de vous désigner responsable de ${typeEquipe} suivante&nbsp;:
+              </p>
+
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:22px;">
+                <tr>
+                  <td style="padding:14px; background:${COLORS.redTint}; border-radius:10px;">
+                    <div style="font-size:14px; font-weight:700; color:${COLORS.text};">${equipeNom}</div>
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin:0; font-size:12.5px; color:${COLORS.textFaint}; line-height:1.6;">
+                Vous pouvez dès à présent gérer cette équipe (membres, tâches, avancement) depuis votre espace responsable.
+              </p>
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="padding:18px 32px; border-top:1px solid ${COLORS.border};">
+              <p style="margin:0; font-size:11px; color:${COLORS.textFaint}; text-align:center;">
+                Ceci est un e-mail automatique, merci de ne pas y répondre.<br />
+                — L'équipe ESPRIT · Gestion des Activités
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`.trim()
+}
+
+function buildResponsableAssignationText({ responsableNom, equipeNom, typeEquipe }) {
+  return (
+    `Bonjour ${responsableNom},\n\n` +
+    `L'administration vient de vous désigner responsable de ${typeEquipe} suivante : ${equipeNom}.\n\n` +
+    `Vous pouvez dès à présent gérer cette équipe (membres, tâches, avancement) depuis votre espace responsable.\n\n` +
+    `— L'équipe ESPRIT · Gestion des Activités`
+  )
+}
+
+// Notifie par e-mail un responsable nouvellement désigné sur une sous-équipe ou une
+// équipe hors UP (voir sousEquipes.controller.js -> editSousEquipe et
+// equipeHorsUp.controller.js -> editEquipeHorsUp). `typeEquipe` est injecté tel quel
+// dans le texte, ex. "la sous-équipe" ou "l'équipe hors UP".
+export async function sendResponsableAssignationEmail({ to, responsableNom, equipeNom, typeEquipe }) {
+  if (!to) return
+  if (!process.env.SMTP_HOST) {
+    console.log(`[mailer] SMTP non configuré — désignation responsable "${equipeNom}" non notifiée à ${to}`)
+    return
+  }
+
+  const from = process.env.SMTP_FROM || '"ESPRIT · Gestion des Activités" <no-reply@esprit.local>'
+  const payload = { responsableNom, equipeNom, typeEquipe }
+
+  await getTransporter().sendMail({
+    from,
+    to,
+    subject: `Vous êtes désormais responsable de ${equipeNom}`,
+    text: buildResponsableAssignationText(payload),
+    html: buildResponsableAssignationHtml(payload),
+    attachments: [ESPRIT_LOGO_ATTACHMENT],
   })
 }

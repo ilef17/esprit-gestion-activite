@@ -66,6 +66,46 @@ export async function ensureNotificationSchema() {
       "`profil_visible` tinyint(1) NOT NULL DEFAULT '1'"
     )
 
+    // Côté admin, seule "Notifications par email" existe dans "Mon profil" (pas de
+    // toggle de visibilité, l'admin voit tout par définition).
+    await ajouterColonneSiAbsente(
+      'admin', 'notifications_email',
+      "`notifications_email` tinyint(1) NOT NULL DEFAULT '1'"
+    )
+
+    // "Activité Au Sein ESPRIT" était jusqu'ici un critère personnalisé (code NULL) noté
+    // manuellement par l'admin dans la grille "Noter les membres" — ce qui ouvrait la
+    // porte à du favoritisme (un ami noté plus haut qu'un collègue équivalent, sans
+    // justification vérifiable). On le rattache à un calcul automatique (encadrements +
+    // expertises + activités académiques, voir getActiviteEcoleRatios dans
+    // evaluationScore.model.js) en lui donnant le code `activite_ecole`, exactement comme
+    // les 4 critères de base : dès qu'un critère a un code, l'UI admin masque la grille de
+    // notation manuelle (elle ne s'affiche que pour `!c.code`) et la note est recalculée à
+    // partir des données réelles à chaque application de la formule.
+    // Si l'admin l'avait déjà créé à la main (nom identique), on lui ajoute juste le code
+    // en conservant sa pondération existante ; sinon on le crée avec pondération 0 (à
+    // ajuster ensuite via le curseur, comme n'importe quel critère).
+    const [dejaConnecte] = await pool.query(
+      "SELECT id_critere FROM critere_evaluation WHERE code = 'activite_ecole' LIMIT 1"
+    )
+    if (dejaConnecte.length === 0) {
+      const [dejaPersonnalise] = await pool.query(
+        "SELECT id_critere FROM critere_evaluation WHERE nom = 'Activité Au Sein ESPRIT' AND code IS NULL LIMIT 1"
+      )
+      if (dejaPersonnalise.length > 0) {
+        await pool.query(
+          "UPDATE critere_evaluation SET code = 'activite_ecole' WHERE id_critere = ?",
+          [dejaPersonnalise[0].id_critere]
+        )
+        console.log('[schema] Critère "Activité Au Sein ESPRIT" rattaché au calcul automatique')
+      } else {
+        await pool.query(
+          "INSERT INTO critere_evaluation (nom, code, ponderation) VALUES ('Activité Au Sein ESPRIT', 'activite_ecole', 0)"
+        )
+        console.log('[schema] Critère "Activité Au Sein ESPRIT" créé (calcul automatique)')
+      }
+    }
+
     console.log('[schema] Notifications : schéma vérifié ✓')
   } catch (err) {
     console.error('[schema] Erreur lors de la vérification du schéma de notifications :', err)

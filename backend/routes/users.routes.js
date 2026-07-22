@@ -15,11 +15,14 @@ import { requireAuth, requireRole } from '../middleware/auth.middleware.js'
 
 const router = Router()
 
-// Profil du collaborateur connecté — déclaré avant '/:role/:id' pour ne pas être capturé par lui.
-router.get('/me', requireAuth, requireRole('collaborateur'), getMe)
-router.patch('/me/preferences', requireAuth, requireRole('collaborateur'), updateMyPreferences)
-router.patch('/me/profil', requireAuth, requireRole('collaborateur'), updateMyProfil)
-router.patch('/me/mot-de-passe', requireAuth, requireRole('collaborateur'), updateMyPassword)
+// Profil du compte connecté (admin, responsable ou collaborateur) — déclaré avant
+// '/:role/:id' pour ne pas être capturé par lui. Le contrôleur distingue déjà le
+// rôle via req.user.role ; la route ne doit pas restreindre plus que lui, sinon
+// responsable/admin se prennent un 403 avant même d'atteindre le contrôleur.
+router.get('/me', requireAuth, requireRole('collaborateur', 'responsable', 'admin'), getMe)
+router.patch('/me/preferences', requireAuth, requireRole('collaborateur', 'responsable', 'admin'), updateMyPreferences)
+router.patch('/me/profil', requireAuth, requireRole('collaborateur', 'responsable', 'admin'), updateMyProfil)
+router.patch('/me/mot-de-passe', requireAuth, requireRole('collaborateur', 'responsable', 'admin'), updateMyPassword)
 
 // Liste allégée des collaborateurs — responsable (affectation membres/tâches) ou admin.
 router.get('/collaborateurs-options', requireAuth, requireRole('admin', 'responsable'), listCollaborateursOptions)

@@ -11,7 +11,7 @@ import {
   getEncadrementById,
   addEncadrement as addEncadrementModel,
   deleteEncadrement as deleteEncadrementModel,
-  countEncadrementsParCollaborateur,
+  getAllEncadrements,
 } from '../models/Encadrement.model.js'
 import {
   getActivitesByCollaborateur,
@@ -39,19 +39,37 @@ function toItem(row) {
   return { id: row.id_activite, titre: row.titre, role: row.role || null, date: row.date_activite }
 }
 
+// Les encadrements n'ont pas de date précise (seulement une année universitaire
+// libre, ex. "2025/2026") : on l'expose telle quelle pour que le frontend puisse
+// filtrer par année (le filtre Année/Semestre s'applique alors juste sur l'année,
+// un encadrement restant visible sur les deux semestres de son année).
+function toEncadrementItem(row) {
+  return {
+    id: row.id_encadrement,
+    titre: row.nom_etudiant,
+    sujet: row.sujet || null,
+    type: row.type,
+    annee_universitaire: row.annee_universitaire || null,
+  }
+}
+
 // Liste des professeurs (collaborateurs) avec leur activité école complète, utilisée par
 // le tableau principal de la page admin "Activité école" ET par "Tous les collègues"
 // côté collaborateur (même endpoint, même données).
 export async function listProfesseurs(req, res) {
   try {
-    const [collaborateurs, nbEncadrements, allExpertises, allActivites] = await Promise.all([
+    const [collaborateurs, allEncadrements, allExpertises, allActivites] = await Promise.all([
       getAllCollaborateurs(),
-      countEncadrementsParCollaborateur(),
+      getAllEncadrements(),
       getAllExpertises(),
       getAllActivites(),
     ])
 
-    const encadrementMap = new Map(nbEncadrements.map((r) => [r.id_collaborateur, Number(r.nb)]))
+    const encadrementMap = new Map()
+    for (const e of allEncadrements) {
+      if (!encadrementMap.has(e.id_collaborateur)) encadrementMap.set(e.id_collaborateur, [])
+      encadrementMap.get(e.id_collaborateur).push(toEncadrementItem(e))
+    }
 
     const expertisesMap = new Map()
     for (const e of allExpertises) {
@@ -72,12 +90,16 @@ export async function listProfesseurs(req, res) {
 
     const professeurs = collaborateurs.map((c) => {
       const activites = activitesMap.get(c.id_collaborateur) || {}
+      const encadrements = encadrementMap.get(c.id_collaborateur) || []
       const item = {
         id: c.id_collaborateur,
         nom: c.nom,
         email: c.email,
         actif: !!c.actif,
-        nb_etudiants_encadres: encadrementMap.get(c.id_collaborateur) || 0,
+        // Conservé pour compatibilité (total non filtré) ; le frontend filtre désormais
+        // sur `encadrements` (itemisé, avec annee_universitaire) pour respecter le filtre période.
+        nb_etudiants_encadres: encadrements.length,
+        encadrements,
         expertises: expertisesMap.get(c.id_collaborateur) || [],
       }
       for (const type of CATEGORIES_ACTIVITE) {

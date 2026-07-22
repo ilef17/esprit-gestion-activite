@@ -199,8 +199,8 @@ export async function getGrilleNotes(idEquipe, type = 'up') {
   const res = await api.get('/evaluations/grille', { params: { sous_equipe: idEquipe, type } })
   return res.data
 }
-export async function calculerScores(idEquipe, notes, type = 'up') {
-  const res = await api.post('/evaluations/calculer', { id_sous_equipe: idEquipe, notes, type })
+export async function calculerScores(idEquipe, notes, type = 'up', annee_universitaire, semestre) {
+  const res = await api.post('/evaluations/calculer', { id_sous_equipe: idEquipe, notes, type, annee_universitaire, semestre })
   return res.data
 }
 /* ---------- Rapports ---------- */
@@ -396,16 +396,16 @@ export async function getMesAffectationsVoeuxPedagogiques() {
 }
 
 /* ---------- Mon profil (collaborateur) ---------- */
-export async function getMonProfil() {
-  const res = await api.get('/users/me')
+export async function getMonProfil(annee_universitaire, semestre) {
+  const res = await api.get('/users/me', { params: { annee_universitaire, semestre } })
   return res.data
 }
-export async function updateMesPreferences(payload) {
-  const res = await api.patch('/users/me/preferences', payload)
+export async function updateMesPreferences(payload, annee_universitaire, semestre) {
+  const res = await api.patch('/users/me/preferences', payload, { params: { annee_universitaire, semestre } })
   return res.data
 }
-export async function updateMonProfilIdentite(payload) {
-  const res = await api.patch('/users/me/profil', payload)
+export async function updateMonProfilIdentite(payload, annee_universitaire, semestre) {
+  const res = await api.patch('/users/me/profil', payload, { params: { annee_universitaire, semestre } })
   return res.data
 }
 export async function changerMonMotDePasse(payload) {

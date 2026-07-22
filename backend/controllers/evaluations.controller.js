@@ -30,11 +30,21 @@ export async function getGrille(req, res) {
 
 export async function calculerScores(req, res) {
   try {
-    const { id_sous_equipe, notes, type } = req.body
+    const { id_sous_equipe, notes, type, annee_universitaire, semestre } = req.body
     if (!id_sous_equipe) return res.status(400).json({ message: 'id_sous_equipe requis.' })
-    const results = await calculerScoresEquipe(id_sous_equipe, notes || {}, type === 'hors_up' ? 'hors_up' : 'up')
+    const results = await calculerScoresEquipe(
+      id_sous_equipe,
+      notes || {},
+      type === 'hors_up' ? 'hors_up' : 'up',
+      { annee_universitaire, semestre }
+    )
     res.json(results)
   } catch (err) {
+    // Erreurs de validation métier (note personnalisée manquante ou sans justification
+    // suffisante, voir calculerScoresEquipe) : message clair en 400, pas un 500 générique.
+    if (err.message?.includes('Note manquante') || err.message?.includes('Justification requise')) {
+      return res.status(400).json({ message: err.message })
+    }
     console.error(err)
     res.status(500).json({ message: 'Erreur serveur' })
   }

@@ -11,6 +11,8 @@ import {
   getSousEquipesByResponsable,
   sousEquipeAppartientAuResponsable,
 } from '../models/sousEquipe.model.js'
+import { getResponsableById } from '../models/responsable.model.js'
+import { sendResponsableAssignationEmail } from '../utils/Mailer.js'
 
 // Liste simple (publique — utilisée par la page d'inscription)
 export async function listSousEquipes(req, res) {
@@ -78,6 +80,21 @@ export async function addSousEquipe(req, res) {
     const { nom } = req.body
     if (!nom) return res.status(400).json({ message: 'Le nom de la sous-équipe est requis.' })
     const created = await createSousEquipe(req.body)
+
+    // Un responsable peut être choisi dès la création de la sous-équipe (et pas
+    // seulement via une édition ultérieure) — on le notifie dans ce cas aussi.
+    if (req.body.id_responsable) {
+      const responsable = await getResponsableById(created.id_responsable)
+      if (responsable) {
+        sendResponsableAssignationEmail({
+          to: responsable.email,
+          responsableNom: responsable.nom,
+          equipeNom: created.nom,
+          typeEquipe: 'la sous-équipe',
+        }).catch((err) => console.error('Erreur envoi email de désignation responsable:', err))
+      }
+    }
+
     res.status(201).json(created)
   } catch (err) {
     console.error(err)
@@ -87,7 +104,29 @@ export async function addSousEquipe(req, res) {
 
 export async function editSousEquipe(req, res) {
   try {
+    const before = await getSousEquipeById(req.params.id)
     const updated = await updateSousEquipe(req.params.id, req.body)
+
+    // Nouvelle désignation (ou changement) de responsable : on notifie le
+    // responsable par e-mail. On ne notifie pas si id_responsable est absent du
+    // corps de la requête (édition d'un autre champ) ou inchangé. Number(...) car
+    // le front envoie une chaîne ("12") alors que MySQL renvoie un entier.
+    const idResponsableChanged =
+      req.body.id_responsable !== undefined &&
+      req.body.id_responsable &&
+      Number(req.body.id_responsable) !== Number(before?.id_responsable)
+    if (idResponsableChanged) {
+      const responsable = await getResponsableById(updated.id_responsable)
+      if (responsable) {
+        sendResponsableAssignationEmail({
+          to: responsable.email,
+          responsableNom: responsable.nom,
+          equipeNom: updated.nom,
+          typeEquipe: 'la sous-équipe',
+        }).catch((err) => console.error('Erreur envoi email de désignation responsable:', err))
+      }
+    }
+
     res.json(updated)
   } catch (err) {
     console.error(err)

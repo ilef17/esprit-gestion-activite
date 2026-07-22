@@ -40,3 +40,12 @@ export async function countEncadrementsParCollaborateur() {
   )
   return rows
 }
+
+// Tous les encadrements, tous collaborateurs confondus — utilisé par le tableau
+// "Activité école" (admin + "Tous les collègues" collaborateur) pour pouvoir filtrer
+// par année universitaire côté frontend (même logique que expertises/activités), au
+// lieu de se limiter à un simple total non filtrable.
+export async function getAllEncadrements() {
+  const [rows] = await pool.query('SELECT * FROM encadrement ORDER BY date_ajout DESC')
+  return rows
+}

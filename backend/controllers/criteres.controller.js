@@ -44,6 +44,9 @@ export async function removeCritere(req, res) {
     await deleteCritere(req.params.id)
     res.status(204).end()
   } catch (err) {
+    if (err.message?.includes('calculé automatiquement')) {
+      return res.status(409).json({ message: err.message })
+    }
     console.error(err)
     res.status(500).json({ message: 'Erreur serveur' })
   }

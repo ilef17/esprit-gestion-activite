@@ -130,10 +130,22 @@ function periodeParDefaut() {
 // filtrer les demandes hors-équipe (date_reception) et les activités école (date_activite),
 // qui n'ont pas de colonnes annee_universitaire/semestre dédiées comme les tâches.
 function periodeDeDate(dateStr) {
-  const d = new Date(dateStr)
-  if (Number.isNaN(d.getTime())) return null
-  const mois = d.getMonth() + 1
-  const anneeDebut = mois >= 9 ? d.getFullYear() : d.getFullYear() - 1
+  // Lit directement les composants année/mois de la chaîne ISO (YYYY-MM-DD…) plutôt
+  // que de passer par un objet Date, pour éviter un décalage de jour/mois dû à la
+  // conversion de fuseau horaire (ex. une date stockée à minuit UTC qui basculerait
+  // sur le jour précédent une fois interprétée dans le fuseau du navigateur).
+  const m = typeof dateStr === 'string' && dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  let annee, mois
+  if (m) {
+    annee = Number(m[1])
+    mois = Number(m[2])
+  } else {
+    const d = new Date(dateStr)
+    if (Number.isNaN(d.getTime())) return null
+    annee = d.getFullYear()
+    mois = d.getMonth() + 1
+  }
+  const anneeDebut = mois >= 9 ? annee : annee - 1
   return { annee: `${anneeDebut}/${anneeDebut + 1}`, semestre: (mois >= 9 || mois <= 1) ? 'S1' : 'S2' }
 }
 // Une entrée sans date reste toujours visible, quel que soit le filtre (même logique que
@@ -143,6 +155,14 @@ function estDansPeriode(dateStr, filtreAnnee, filtreSemestre) {
   const p = periodeDeDate(dateStr)
   if (!p) return true
   return p.annee === filtreAnnee && p.semestre === filtreSemestre
+}
+
+// Les encadrements n'ont qu'une année universitaire libre (pas de semestre) : un
+// encadrement reste donc visible sur les deux semestres de son année. Sans année
+// renseignée, il reste toujours visible (même logique que les entrées sans date).
+function estDansAnnee(anneeUniversitaire, filtreAnnee) {
+  if (!anneeUniversitaire) return true
+  return anneeUniversitaire === filtreAnnee
 }
 
 const NAV_TABS = [
@@ -304,24 +324,24 @@ function CollaborateurDashboard() {
                 loading={tachesLoading}
                 savingId={savingId}
                 changerStatut={changerStatutTache}
-                currentUserId={user?.id}
+                currentUserId={user?.id_collaborateur}
                 demandesCount={demandesCount}
                 filtreAnnee={filtreAnnee}
                 filtreSemestre={filtreSemestre}
               />
             )}
-            {activePage === 'horsequipe' && <ActivitesHorsEquipe showToast={showToast} />}
-            {activePage === 'voeux-pedagogiques' && <VoeuxPedagogiquesCollab showToast={showToast} />}
+            {activePage === 'horsequipe' && <ActivitesHorsEquipe showToast={showToast} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} />}
+            {activePage === 'voeux-pedagogiques' && <VoeuxPedagogiquesCollab showToast={showToast} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} />}
             {activePage === 'activite-ecole' && (
               <>
-                <MonActiviteEcole showToast={showToast} />
+                <MonActiviteEcole showToast={showToast} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} />
                 <div style={{ marginTop: 24 }}>
-                  <ActiviteEcoleTousLesCollegues showToast={showToast} />
+                  <ActiviteEcoleTousLesCollegues showToast={showToast} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} currentUserId={user?.id_collaborateur} />
                 </div>
               </>
             )}
             {activePage === 'profil' && (
-              <MonProfil user={user} showToast={showToast} dark={dark} onToggleDark={toggleDark} updateUser={updateUser} />
+              <MonProfil user={user} showToast={showToast} dark={dark} onToggleDark={toggleDark} updateUser={updateUser} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} />
             )}
           </div>
         </main>
@@ -520,14 +540,20 @@ function MesTaches({ showToast, taches, loading, savingId, changerStatut, curren
   // Cache des membres par sous-équipe, pour remplir le menu déroulant "membre concerné"
   const [membresParEquipe, setMembresParEquipe] = useState({})
   const [membresLoading, setMembresLoading] = useState(false)
+  // Filtre déclenché par les cartes KPI "Tâches en cours" / "Tâches réalisées" :
+  // cliquer une carte filtre la liste sur ce statut, recliquer la même carte retire le filtre.
+  const [statutFiltre, setStatutFiltre] = useState(null) // null | 'en_cours' | 'validee'
+  const toggleStatutFiltre = (statut) => setStatutFiltre((prev) => (prev === statut ? null : statut))
 
   const equipes = Array.from(new Set(taches.map((t) => t.sous_equipe_nom).filter(Boolean))).sort()
 
-  // Le filtre Année/Semestre du haut de page s'applique en plus du filtre par équipe.
-  // Les tâches sans période enregistrée (anciennes données, avant migration) restent
-  // visibles quel que soit le filtre, pour ne rien faire disparaître silencieusement.
+  // Le filtre Année/Semestre du haut de page s'applique en plus du filtre par équipe et du
+  // filtre de statut (cartes KPI). Les tâches sans période enregistrée (anciennes données,
+  // avant migration) restent visibles quel que soit le filtre, pour ne rien faire disparaître
+  // silencieusement.
   const tachesFiltrees = taches
     .filter((t) => equipeFiltre === 'toutes' || t.sous_equipe_nom === equipeFiltre)
+    .filter((t) => !statutFiltre || t.statut === statutFiltre)
     .filter((t) => !t.annee_universitaire || t.annee_universitaire === filtreAnnee)
     .filter((t) => !t.semestre || t.semestre === filtreSemestre)
 
@@ -563,8 +589,26 @@ function MesTaches({ showToast, taches, loading, savingId, changerStatut, curren
   return (
     <>
       <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(3,1fr)', maxWidth: 760 }}>
-        <div className="kpi"><div className="top"><div className="icon-wrap blue"><Icon.clock /></div></div><div className="num">{enCours}</div><div className="label">Tâches en cours</div></div>
-        <div className="kpi"><div className="top"><div className="icon-wrap green"><Icon.task /></div></div><div className="num">{validees}</div><div className="label">Tâches réalisées</div></div>
+        <div
+          className={`kpi clickable${statutFiltre === 'en_cours' ? ' active' : ''}`}
+          role="button"
+          tabIndex={0}
+          title={statutFiltre === 'en_cours' ? 'Cliquez pour retirer le filtre' : 'Filtrer sur les tâches en cours'}
+          onClick={() => toggleStatutFiltre('en_cours')}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleStatutFiltre('en_cours') } }}
+        >
+          <div className="top"><div className="icon-wrap blue"><Icon.clock /></div></div><div className="num">{enCours}</div><div className="label">Tâches en cours</div>
+        </div>
+        <div
+          className={`kpi clickable${statutFiltre === 'validee' ? ' active' : ''}`}
+          role="button"
+          tabIndex={0}
+          title={statutFiltre === 'validee' ? 'Cliquez pour retirer le filtre' : 'Filtrer sur les tâches réalisées'}
+          onClick={() => toggleStatutFiltre('validee')}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleStatutFiltre('validee') } }}
+        >
+          <div className="top"><div className="icon-wrap green"><Icon.task /></div></div><div className="num">{validees}</div><div className="label">Tâches réalisées</div>
+        </div>
         <div className="kpi"><div className="top"><div className="icon-wrap red"><Icon.requests /></div></div><div className="num">{demandesCount}</div><div className="label">Activités hors-équipe</div></div>
       </div>
       <div className="card">
@@ -645,7 +689,7 @@ function MesTaches({ showToast, taches, loading, savingId, changerStatut, curren
 }
 
 /* ================= ACTIVITÉS HORS-ÉQUIPE (branché à l'API des demandes) ================= */
-function ActivitesHorsEquipe({ showToast }) {
+function ActivitesHorsEquipe({ showToast, filtreAnnee, filtreSemestre }) {
   const [loading, setLoading] = useState(true)
   const [demandes, setDemandes] = useState([])
   const [submitting, setSubmitting] = useState(false)
@@ -664,6 +708,8 @@ function ActivitesHorsEquipe({ showToast }) {
   ), [showToast])
 
   useEffect(() => { refresh() }, [refresh])
+
+  const demandesFiltrees = demandes.filter((d) => estDansPeriode(d.date_reception, filtreAnnee, filtreSemestre))
 
   const soumettre = async () => {
     if (!description.trim()) { showToast('La description est requise'); return }
@@ -729,10 +775,10 @@ function ActivitesHorsEquipe({ showToast }) {
         <div>
           <div className="card">
             <div className="card-head">
-              <div><h2>Mes demandes</h2><div className="hint">{loading ? 'Chargement…' : `${demandes.length} demande${demandes.length > 1 ? 's' : ''}`}</div></div>
+              <div><h2>Mes demandes</h2><div className="hint">{loading ? 'Chargement…' : `${demandesFiltrees.length} demande${demandesFiltrees.length > 1 ? 's' : ''} sur la période sélectionnée`}</div></div>
             </div>
             <div className="list">
-              {demandes.map((d) => {
+              {demandesFiltrees.map((d) => {
                 const meta = demandeStatutMeta(d.statut)
                 return (
                   <div className="list-item" key={d.id_demande}>
@@ -750,8 +796,8 @@ function ActivitesHorsEquipe({ showToast }) {
                   </div>
                 )
               })}
-              {!loading && demandes.length === 0 && (
-                <div className="list-item"><div className="body"><div className="desc">Aucune demande pour le moment</div></div></div>
+              {!loading && demandesFiltrees.length === 0 && (
+                <div className="list-item"><div className="body"><div className="desc">Aucune demande sur cette période</div></div></div>
               )}
             </div>
           </div>
@@ -817,7 +863,7 @@ function OuiNonToggle({ value, onChange, disabled }) {
   )
 }
 
-function VoeuxPedagogiquesCollab({ showToast }) {
+function VoeuxPedagogiquesCollab({ showToast, filtreAnnee, filtreSemestre }) {
   const [loading, setLoading] = useState(true)
   const [campagne, setCampagne] = useState(null)
   const [reponse, setReponse] = useState(null)
@@ -867,6 +913,7 @@ function VoeuxPedagogiquesCollab({ showToast }) {
 
   const submit = () => {
     if (!campagne) return
+    if (reponsesVerrouillees) { showToast?.('Vos réponses sont verrouillées 24h après leur envoi et ne sont plus modifiables'); return }
     if (!alternance) { showToast?.("Merci de répondre à la question sur l'alternance"); return }
     if (!international) { showToast?.('Merci de répondre à la question sur la classe internationale'); return }
     if (!heuresSup) { showToast?.('Merci de répondre à la question sur les heures supplémentaires'); return }
@@ -907,6 +954,14 @@ function VoeuxPedagogiquesCollab({ showToast }) {
     autre: 'Autre',
   }
 
+  // Les réponses sont verrouillées 24h après leur premier envoi (date_soumission ne
+  // change plus ensuite, seule date_modification bouge) : passé ce délai, l'admin doit
+  // pouvoir affecter les collaborateurs sans qu'ils continuent à changer leurs réponses.
+  const heuresDepuisEnvoi = reponse?.date_soumission
+    ? (Date.now() - new Date(reponse.date_soumission).getTime()) / 36e5
+    : null
+  const reponsesVerrouillees = heuresDepuisEnvoi !== null && heuresDepuisEnvoi >= 24
+
   // Si le niveau n'a pas été enregistré séparément, on le retrouve dans le nom
   // du module (format "Module[Niveau]" tel que configuré par l'admin).
   const niveauAffichage = (a) => {
@@ -922,7 +977,11 @@ function VoeuxPedagogiquesCollab({ showToast }) {
     autre: 'vp-autre',
   }
 
-  const affectationsParType = affectations.reduce((acc, a) => {
+  // Comme les activités école, chaque affectation est rattachée à une période via sa
+  // date d'affectation — filtrée sur le sélecteur Année/Semestre en haut de page.
+  const affectationsFiltrees = affectations.filter((a) => estDansPeriode(a.date_affectation, filtreAnnee, filtreSemestre))
+
+  const affectationsParType = affectationsFiltrees.reduce((acc, a) => {
     acc[a.type] = (acc[a.type] || 0) + 1
     return acc
   }, {})
@@ -932,7 +991,9 @@ function VoeuxPedagogiquesCollab({ showToast }) {
       <div className="card-head">
         <div>
           <h2>Mes affectations</h2>
-          <div className="hint">{affectations.length} affectation{affectations.length > 1 ? 's' : ''}</div>
+          <div className="hint">
+            {affectationsFiltrees.length} affectation{affectationsFiltrees.length > 1 ? 's' : ''} sur la période sélectionnée
+          </div>
         </div>
         <div className="affectations-summary">
           {Object.entries(affectationsParType).map(([type, count]) => (
@@ -953,7 +1014,7 @@ function VoeuxPedagogiquesCollab({ showToast }) {
             </tr>
           </thead>
           <tbody>
-            {affectations.map((a) => (
+            {affectationsFiltrees.map((a) => (
               <tr key={a.id_affectation}>
                 <td>
                   <div className="module-cell">
@@ -970,6 +1031,9 @@ function VoeuxPedagogiquesCollab({ showToast }) {
                 </td>
               </tr>
             ))}
+            {affectationsFiltrees.length === 0 && (
+              <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-faint)' }}>Aucune affectation sur cette période</td></tr>
+            )}
           </tbody>
         </table>
       </div>
@@ -996,16 +1060,23 @@ function VoeuxPedagogiquesCollab({ showToast }) {
           {reponse
             ? (editing
               ? 'Vous pouvez modifier vos réponses tant que le questionnaire reste ouvert.'
-              : 'Vos réponses ont bien été envoyées.')
+              : (reponsesVerrouillees
+                ? 'Vos réponses ont bien été envoyées et sont désormais verrouillées.'
+                : 'Vos réponses ont bien été envoyées.'))
             : 'Répondez aux questions ci-dessous. Vous pourrez modifier vos réponses tant que le questionnaire reste ouvert.'}
         </p>
+        {campagne.date_creation && !estDansPeriode(campagne.date_creation, filtreAnnee, filtreSemestre) && (
+          <p style={{ color: 'var(--amber, #B45309)', fontSize: 12.5, marginTop: 4 }}>
+            Ce questionnaire a été créé hors de la période sélectionnée ({filtreAnnee} · {filtreSemestre === 'S1' ? 'Semestre 1' : 'Semestre 2'}) — il reste affiché car c'est le questionnaire actuellement ouvert.
+          </p>
+        )}
       </div>
 
       {affectationsCard}
 
       {reponse && !editing && (
         <div className="card">
-          <div className="card-head"><div><h2>Mes réponses</h2><div className="hint">Envoyées — vous pouvez encore les modifier tant que le questionnaire reste ouvert.</div></div></div>
+          <div className="card-head"><div><h2>Mes réponses</h2><div className="hint">{reponsesVerrouillees ? 'Envoyées — verrouillées 24h après l\'envoi, elles ne sont plus modifiables.' : 'Envoyées — vous pouvez encore les modifier tant que le questionnaire reste ouvert.'}</div></div></div>
           <div className="reponses-grid">
             <div className="reponse-item full">
               <div className="reponse-label">Q1 — Modules souhaités</div>
@@ -1047,7 +1118,13 @@ function VoeuxPedagogiquesCollab({ showToast }) {
             )}
           </div>
           <div style={{ padding: '4px 20px 18px' }}>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(true)}>Modifier mes réponses</button>
+            {reponsesVerrouillees ? (
+              <span style={{ color: 'var(--text-faint)', fontSize: 12.5 }}>
+                Envoyées le {formatDateShortFr(reponse.date_soumission)} — verrouillées depuis, non modifiables.
+              </span>
+            ) : (
+              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(true)}>Modifier mes réponses</button>
+            )}
           </div>
         </div>
       )}
@@ -1119,7 +1196,7 @@ function VoeuxPedagogiquesCollab({ showToast }) {
 
 /* ================= MON PROFIL (branché à l'API : identité, sous-équipes, responsable,
    dernier score et préférences persistées) ================= */
-function MonProfil({ user, showToast, dark, onToggleDark, updateUser }) {
+function MonProfil({ user, showToast, dark, onToggleDark, updateUser, filtreAnnee, filtreSemestre }) {
   const [profil, setProfil] = useState(null)
   const [loading, setLoading] = useState(true)
   const [savingPref, setSavingPref] = useState(null) // 'notifications_email' | 'profil_visible' | null
@@ -1128,14 +1205,14 @@ function MonProfil({ user, showToast, dark, onToggleDark, updateUser }) {
   const email = profil?.email || user?.email
 
   useEffect(() => {
-    getMonProfil()
+    getMonProfil(filtreAnnee, filtreSemestre)
       .then(setProfil)
       .catch((err) => {
         console.error('Erreur chargement du profil:', err)
         showToast?.('Erreur lors du chargement de votre profil')
       })
       .finally(() => setLoading(false))
-  }, [showToast])
+  }, [showToast, filtreAnnee, filtreSemestre])
 
   const togglePref = async (key) => {
     if (!profil) return
@@ -1143,9 +1220,9 @@ function MonProfil({ user, showToast, dark, onToggleDark, updateUser }) {
     setProfil((p) => ({ ...p, [key]: nextValue })) // optimiste
     setSavingPref(key)
     try {
-      const updated = await updateMesPreferences({ [key]: nextValue })
+      const updated = await updateMesPreferences({ [key]: nextValue }, filtreAnnee, filtreSemestre)
       // Fusion avec l'état existant (et non remplacement) : si la réponse ne renvoie pas
-      // certains champs (ex. dernier_score), on ne veut pas les perdre côté UI.
+      // certains champs (ex. mes_scores), on ne veut pas les perdre côté UI.
       setProfil((p) => ({ ...p, ...updated }))
     } catch (err) {
       console.error(err)
@@ -1176,7 +1253,7 @@ function MonProfil({ user, showToast, dark, onToggleDark, updateUser }) {
     if (!nom || !emailPropre) { showToast?.('Le nom et l\'email sont requis'); return }
     setSavingIdentite(true)
     try {
-      const updated = await updateMonProfilIdentite({ nom, email: emailPropre })
+      const updated = await updateMonProfilIdentite({ nom, email: emailPropre }, filtreAnnee, filtreSemestre)
       setProfil((p) => ({ ...p, ...updated }))
       updateUser?.({ nom: updated.nom, email: updated.email })
       setEditingIdentite(false)
@@ -1218,10 +1295,7 @@ function MonProfil({ user, showToast, dark, onToggleDark, updateUser }) {
     }
   }
 
-  const score = profil?.dernier_score
-  const scoreLabel = score
-    ? `${score.equipe_nom || 'Équipe'} · ${score.semestre === 'S1' ? 'Semestre 1' : 'Semestre 2'} ${score.annee_universitaire}`
-    : "Aucune évaluation calculée pour le moment"
+  const scores = profil?.mes_scores || []
 
   return (
     <>
@@ -1266,12 +1340,27 @@ function MonProfil({ user, showToast, dark, onToggleDark, updateUser }) {
       <div className="grid-2">
         <div>
           <div className="card">
-            <div className="card-head"><div><h2>Mon score</h2><div className="hint">{loading ? 'Chargement…' : scoreLabel}</div></div></div>
-            <div className="rank-row">
-              <span className="rk">—</span>
-              <div className="body" style={{ flex: 1 }}><div className="title">Score final</div></div>
-              <span className="score">{score ? `${score.score}/20` : '—/20'}</span>
-            </div>
+            <div className="card-head"><div><h2>Mon score</h2><div className="hint">{loading ? 'Chargement…' : (scores.length ? `${scores.length} équipe${scores.length > 1 ? 's' : ''} sur la période sélectionnée` : 'Aucune évaluation calculée pour cette période')}</div></div></div>
+            {scores.length === 0 && !loading && (
+              <div style={{ padding: '0 20px 16px', color: 'var(--text-faint)', fontSize: 12.5 }}>Aucune évaluation calculée pour cette période</div>
+            )}
+            {scores.map((s) => {
+              const pct = Math.max(0, Math.min(100, (Number(s.score) / 20) * 100))
+              const tier = s.score >= 14 ? 'validee' : s.score >= 10 ? 'refaire' : 'nonrealisee'
+              return (
+                <div className="list-item" key={s.id_score}>
+                  <div className="avatar sm">{initials(s.equipe_nom || 'Équipe')}</div>
+                  <div className="body" style={{ flex: 1 }}>
+                    <div className="title">{s.equipe_nom || 'Équipe'}</div>
+                    <div className="desc">{s.semestre === 'S1' ? 'Semestre 1' : 'Semestre 2'} {s.annee_universitaire}</div>
+                    <div className="progress-row" style={{ marginTop: 6 }}>
+                      <div className="progress-track"><div className="progress-fill" style={{ width: `${pct}%` }} /></div>
+                    </div>
+                  </div>
+                  <span className={`badge ${tier}`} style={{ fontFamily: "'Poppins'", fontWeight: 800, fontSize: 13, alignSelf: 'center' }}>{s.score}/20</span>
+                </div>
+              )
+            })}
           </div>
 
           <div className="card">
@@ -1356,7 +1445,7 @@ function MonProfil({ user, showToast, dark, onToggleDark, updateUser }) {
 }
 
 /* ================= MON ACTIVITÉ ÉCOLE (collaborateur) ================= */
-function MonActiviteEcole({ showToast }) {
+function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre }) {
   const [loading, setLoading] = useState(true)
   const [detail, setDetail] = useState({
     expertises: [], encadrements: [],
@@ -1495,6 +1584,10 @@ function MonActiviteEcole({ showToast }) {
 
   const encTypeLabel = { pfe: 'PFE', stage: 'Stage', mini_projet: 'Mini-projet', autre: 'Autre' }
 
+  // Un encadrement n'a qu'une année universitaire (pas de semestre) : filtré sur
+  // l'année du filtre sélectionné en haut de page, visible sur ses deux semestres.
+  const encadrementsFiltres = detail.encadrements.filter((enc) => estDansAnnee(enc.annee_universitaire, filtreAnnee))
+
   return (
     <div className="card">
       <div className="card-head">
@@ -1533,14 +1626,14 @@ function MonActiviteEcole({ showToast }) {
             <div className="ae-section-head">
               <div className="ae-icon blue"><Icon.students /></div>
               <h3>Étudiants encadrés</h3>
-              <span className="ae-count">{detail.encadrements.length}</span>
+              <span className="ae-count">{encadrementsFiltres.length}</span>
               <button className="ae-add-btn" type="button" style={{ marginLeft: 'auto' }} onClick={() => setOpenForm('encadrement')}>+ Ajouter</button>
             </div>
-            {detail.encadrements.length === 0 ? (
-              <div className="ae-empty">Aucun étudiant encadré</div>
+            {encadrementsFiltres.length === 0 ? (
+              <div className="ae-empty">{detail.encadrements.length === 0 ? 'Aucun étudiant encadré' : 'Aucun étudiant encadré sur cette période'}</div>
             ) : (
               <div className="ae-list">
-                {detail.encadrements.map((enc) => (
+                {encadrementsFiltres.map((enc) => (
                   <div key={enc.id_encadrement} className="ae-row">
                     <div className="ae-row-main">
                       <div className="ae-avatar">{initials(enc.nom_etudiant)}</div>
@@ -1564,7 +1657,7 @@ function MonActiviteEcole({ showToast }) {
 
           {/* ---------- Jury / Formations / Événements / Comités ---------- */}
           {Object.keys(ACTIVITE_LABELS).map((type) => {
-            const list = detail[type] || []
+            const list = (detail[type] || []).filter((a) => estDansPeriode(a.date_activite, filtreAnnee, filtreSemestre))
             const { icon: sectionIcon, color: sectionColor } = ACTIVITE_ICONS[type]
             return (
               <div className="ae-section" key={type}>
@@ -1649,7 +1742,10 @@ function MonActiviteEcole({ showToast }) {
                 </div>
                 <div className="field">
                   <label>Année universitaire</label>
-                  <input type="text" placeholder="Ex. 2025/2026" value={encAnnee} onChange={(e) => setEncAnnee(e.target.value)} />
+                  <select value={encAnnee} onChange={(e) => setEncAnnee(e.target.value)}>
+                    <option value="">— Non renseignée —</option>
+                    {ANNEE_OPTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
+                  </select>
                 </div>
                 <div className="field full" style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
                   <button className="btn btn-ghost" type="button" disabled={savingEnc} onClick={() => setOpenForm(null)}>Annuler</button>
@@ -1744,36 +1840,35 @@ function CategoryListModal({ title, items, onClose }) {
   )
 }
 
-/* ================= ACTIVITÉ ÉCOLE — TOUS LES COLLÈGUES (collaborateur, lecture seule) =================
-   Même contenu, mêmes colonnes que la page admin "Activité école" : chaque collègue voit
-   l'implication de tous les autres (expertises, encadrements, jury, formations, événements,
-   comités), mais ne peut modifier que sa propre page "Mon activité école". */
-function ActiviteEcoleTousLesCollegues({ showToast }) {
+/* ================= ACTIVITÉ ÉCOLE — MON ACTIVITÉ (collaborateur, lecture seule) =================
+   Même contenu, mêmes colonnes que la page admin "Activité école", mais restreint à la
+   ligne du collaborateur connecté : chaque collègue ne doit voir que sa propre implication
+   (expertises, encadrements, jury, formations, événements, comités), jamais celle des autres. */
+function ActiviteEcoleTousLesCollegues({ showToast, filtreAnnee, filtreSemestre, currentUserId }) {
   const [professeurs, setProfesseurs] = useState([])
   const [loading, setLoading] = useState(true)
-  const [query, setQuery] = useState('')
   const [selected, setSelected] = useState(null)
   const [categoryModal, setCategoryModal] = useState(null) // { title, items }
 
   useEffect(() => {
     getProfesseurs()
       .then((data) => setProfesseurs(Array.isArray(data) ? data : []))
-      .catch((err) => { console.error(err); showToast('Erreur lors du chargement des collègues') })
+      .catch((err) => { console.error(err); showToast('Erreur lors du chargement de votre activité école') })
       .finally(() => setLoading(false))
   }, [showToast])
 
-  const filtered = professeurs.filter((p) => p.nom.toLowerCase().includes(query.toLowerCase()))
+  const filtered = professeurs.filter((p) => String(p.id) === String(currentUserId))
+  // Les colonnes jury/formation/événements/comités sont filtrées sur la période
+  // sélectionnée (semestre inclus) ; les encadrements n'ont qu'une année universitaire
+  // (pas de semestre) donc filtrés uniquement sur l'année. Les expertises n'ont
+  // aucune notion de période et restent donc toujours affichées en entier.
+  const dansPeriode = (items) => (items || []).filter((it) => estDansPeriode(it.date, filtreAnnee, filtreSemestre))
+  const dansAnnee = (items) => (items || []).filter((it) => estDansAnnee(it.annee_universitaire, filtreAnnee))
 
   return (
     <div className="card">
       <div className="card-head">
-        <div><h2>Activité école — tous les collègues</h2><div className="hint">{loading ? 'Chargement…' : `${professeurs.length} collaborateurs · consultez l'implication de chacun`}</div></div>
-      </div>
-      <div className="toolbar">
-        <div className="search">
-          <Icon.search />
-          <input type="text" placeholder="Rechercher un collègue…" value={query} onChange={(e) => setQuery(e.target.value)} />
-        </div>
+        <div><h2>Activité école</h2><div className="hint">{loading ? 'Chargement…' : 'Détail par catégorie'}</div></div>
       </div>
       <div style={{ overflowX: 'auto' }}>
         <table style={{ marginTop: 8 }}>
@@ -1796,15 +1891,15 @@ function ActiviteEcoleTousLesCollegues({ showToast }) {
             {filtered.map((p) => (
               <tr key={p.id}>
                 <td><div className="name-cell"><div className="avatar sm">{initials(p.nom)}</div><span className="n">{p.nom}</span></div></td>
-                <td>{p.nb_etudiants_encadres}</td>
+                <td><CellLibelle items={dansAnnee(p.encadrements)} onOpenDetail={(items) => setCategoryModal({ title: `Étudiants encadrés — ${p.nom}`, items })} /></td>
                 <td><CellLibelle items={p.expertises} onOpenDetail={(items) => setCategoryModal({ title: `Expertises — ${p.nom}`, items })} /></td>
-                <td><CellLibelle items={p.membre_jury} onOpenDetail={(items) => setCategoryModal({ title: `Membre de jury — ${p.nom}`, items })} /></td>
-                <td><CellLibelle items={p.president_jury} onOpenDetail={(items) => setCategoryModal({ title: `Président de jury — ${p.nom}`, items })} /></td>
-                <td><CellLibelle items={p.formation_ete} onOpenDetail={(items) => setCategoryModal({ title: `Formation d'été — ${p.nom}`, items })} /></td>
-                <td><CellLibelle items={p.formation_hiver} onOpenDetail={(items) => setCategoryModal({ title: `Formation d'hiver — ${p.nom}`, items })} /></td>
-                <td><CellLibelle items={p.formation_printemps} onOpenDetail={(items) => setCategoryModal({ title: `Formation de printemps — ${p.nom}`, items })} /></td>
-                <td><CellLibelle items={p.evenement} onOpenDetail={(items) => setCategoryModal({ title: `Événements — ${p.nom}`, items })} /></td>
-                <td><CellLibelle items={p.comite_organisation} onOpenDetail={(items) => setCategoryModal({ title: `Comités — ${p.nom}`, items })} /></td>
+                <td><CellLibelle items={dansPeriode(p.membre_jury)} onOpenDetail={(items) => setCategoryModal({ title: `Membre de jury — ${p.nom}`, items })} /></td>
+                <td><CellLibelle items={dansPeriode(p.president_jury)} onOpenDetail={(items) => setCategoryModal({ title: `Président de jury — ${p.nom}`, items })} /></td>
+                <td><CellLibelle items={dansPeriode(p.formation_ete)} onOpenDetail={(items) => setCategoryModal({ title: `Formation d'été — ${p.nom}`, items })} /></td>
+                <td><CellLibelle items={dansPeriode(p.formation_hiver)} onOpenDetail={(items) => setCategoryModal({ title: `Formation d'hiver — ${p.nom}`, items })} /></td>
+                <td><CellLibelle items={dansPeriode(p.formation_printemps)} onOpenDetail={(items) => setCategoryModal({ title: `Formation de printemps — ${p.nom}`, items })} /></td>
+                <td><CellLibelle items={dansPeriode(p.evenement)} onOpenDetail={(items) => setCategoryModal({ title: `Événements — ${p.nom}`, items })} /></td>
+                <td><CellLibelle items={dansPeriode(p.comite_organisation)} onOpenDetail={(items) => setCategoryModal({ title: `Comités — ${p.nom}`, items })} /></td>
                 <td>
                   <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                     <button className="icon-btn sm" title="Voir le détail" onClick={() => setSelected(p)}><Icon.eye /></button>
@@ -1813,7 +1908,7 @@ function ActiviteEcoleTousLesCollegues({ showToast }) {
               </tr>
             ))}
             {!loading && filtered.length === 0 && (
-              <tr><td colSpan={11} style={{ textAlign: 'center', color: 'var(--text-faint)' }}>Aucun collègue trouvé</td></tr>
+              <tr><td colSpan={11} style={{ textAlign: 'center', color: 'var(--text-faint)' }}>Aucune donnée</td></tr>
             )}
           </tbody>
         </table>
@@ -1824,6 +1919,8 @@ function ActiviteEcoleTousLesCollegues({ showToast }) {
           professeur={selected}
           onClose={() => setSelected(null)}
           showToast={showToast}
+          filtreAnnee={filtreAnnee}
+          filtreSemestre={filtreSemestre}
         />
       )}
       {categoryModal && (
@@ -1837,7 +1934,7 @@ function ActiviteEcoleTousLesCollegues({ showToast }) {
   )
 }
 
-function CollegueDetail({ professeur, onClose, showToast }) {
+function CollegueDetail({ professeur, onClose, showToast, filtreAnnee, filtreSemestre }) {
   const [loading, setLoading] = useState(true)
   const [detail, setDetail] = useState({
     expertises: [], encadrements: [],
@@ -1853,6 +1950,8 @@ function CollegueDetail({ professeur, onClose, showToast }) {
       .catch((err) => { console.error(err); showToast('Erreur lors du chargement du détail') })
       .finally(() => setLoading(false))
   }, [professeur.id, showToast])
+
+  const encadrementsFiltres = detail.encadrements.filter((enc) => estDansAnnee(enc.annee_universitaire, filtreAnnee))
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -1878,10 +1977,10 @@ function CollegueDetail({ professeur, onClose, showToast }) {
               </div>
 
               <div className="field full">
-                <label>Étudiants encadrés ({detail.encadrements.length})</label>
+                <label>Étudiants encadrés ({encadrementsFiltres.length})</label>
                 <div style={{ marginTop: 4 }}>
-                  {detail.encadrements.length === 0 && <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>Aucun étudiant encadré</span>}
-                  {detail.encadrements.map((enc) => (
+                  {encadrementsFiltres.length === 0 && <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>{detail.encadrements.length === 0 ? 'Aucun étudiant encadré' : 'Aucun étudiant encadré sur cette période'}</span>}
+                  {encadrementsFiltres.map((enc) => (
                     <div key={enc.id_encadrement} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
                       <div>
                         <b>{enc.nom_etudiant}</b>
@@ -1895,12 +1994,12 @@ function CollegueDetail({ professeur, onClose, showToast }) {
               </div>
 
               {Object.keys(ACTIVITE_LABELS).map((type) => {
-                const list = detail[type] || []
+                const list = (detail[type] || []).filter((a) => estDansPeriode(a.date_activite, filtreAnnee, filtreSemestre))
                 return (
                   <div className="field full" key={type}>
                     <label>{ACTIVITE_LABELS[type]} ({list.length})</label>
                     <div style={{ marginTop: 4 }}>
-                      {list.length === 0 && <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>Aucune entrée</span>}
+                      {list.length === 0 && <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>Aucune entrée sur cette période</span>}
                       {list.map((a) => (
                         <div key={a.id_activite} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
                           <div>

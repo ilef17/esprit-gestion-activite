@@ -287,6 +287,18 @@ export async function collabSaveReponse(req, res) {
       return res.status(400).json({ message: 'Ce questionnaire n\'est plus ouvert aux réponses' })
     }
 
+    // Verrouillage 24h après le premier envoi : une fois ce délai passé, le collaborateur
+    // ne peut plus modifier ses réponses (l'admin doit pouvoir affecter sans que les
+    // réponses ne bougent encore sous ses pieds). date_soumission ne change qu'à la
+    // création de la réponse, jamais lors d'une mise à jour, donc ce délai est fixe.
+    const existante = await getMaReponse(id_campagne, req.user.id)
+    if (existante && existante.date_soumission) {
+      const heuresEcoulees = (Date.now() - new Date(existante.date_soumission).getTime()) / 36e5
+      if (heuresEcoulees >= 24) {
+        return res.status(400).json({ message: 'Vos réponses sont verrouillées 24h après leur envoi et ne sont plus modifiables' })
+      }
+    }
+
     const {
       modules_souhaites, alternance, modules_alternance,
       international, modules_international,

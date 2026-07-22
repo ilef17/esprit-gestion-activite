@@ -306,6 +306,7 @@ export default function ResponsableDashboard() {
                     tachesEnRetard={tachesEnRetard}
                     tauxCompletion={tauxCompletion}
                     onChangerStatut={changerStatutTache}
+                    onNavigate={setActivePage}
                   />
                 )}
                 {activePage === 'mon-equipe' && (
@@ -348,14 +349,64 @@ export default function ResponsableDashboard() {
 }
 
 /* ================= DASHBOARD ================= */
-function DashboardHome({ membres, taches, loadingTaches, membresCount, tachesActives, tachesTerminees, tachesEnRetard, tauxCompletion, onChangerStatut }) {
+function DashboardHome({ membres, taches, loadingTaches, membresCount, tachesActives, tachesTerminees, tachesEnRetard, tauxCompletion, onChangerStatut, onNavigate }) {
+  // Filtre local au tableau de bord : cliquer sur une carte "Tâches…" filtre la liste
+  // "Tâches de l'équipe" ci-dessous sans quitter la page. Un second clic sur la même
+  // carte réinitialise le filtre (bascule).
+  const [filtreCarte, setFiltreCarte] = useState('toutes')
+  const toggleFiltreCarte = (val) => setFiltreCarte((f) => (f === val ? 'toutes' : val))
+
+  const tachesAffichees = taches.filter((t) => {
+    if (filtreCarte === 'actives') return t.statut !== 'validee'
+    if (filtreCarte === 'validees') return t.statut === 'validee'
+    if (filtreCarte === 'retard') return t.date_echeance && new Date(t.date_echeance) < new Date() && t.statut !== 'validee'
+    return true
+  })
+  const FILTRE_LABELS = { actives: 'Tâches actives', validees: 'Tâches terminées', retard: 'Tâches en retard' }
+
   return (
     <>
-      <div className="kpi-grid">
-        <div className="kpi"><div className="top"><div className="icon-wrap red"><Icon.teams /></div></div><div className="num">{membresCount}</div><div className="label">Membres de l'équipe</div></div>
-        <div className="kpi"><div className="top"><div className="icon-wrap blue"><Icon.task /></div></div><div className="num">{tachesActives}</div><div className="label">Tâches actives</div></div>
-        <div className="kpi"><div className="top"><div className="icon-wrap green"><Icon.check /></div></div><div className="num">{tachesTerminees}</div><div className="label">Tâches terminées</div></div>
-        <div className="kpi"><div className="top"><div className="icon-wrap amber"><Icon.clock /></div></div><div className="num">{tachesEnRetard}</div><div className="label">Tâches en retard</div></div>
+      <div className="kpi-grid kpi-grid-5">
+        <div
+          className="kpi clickable"
+          role="button"
+          tabIndex={0}
+          onClick={() => onNavigate('mon-equipe')}
+          onKeyDown={(e) => { if (e.key === 'Enter') onNavigate('mon-equipe') }}
+          title="Voir mon équipe"
+        >
+          <div className="top"><div className="icon-wrap red"><Icon.teams /></div></div><div className="num">{membresCount}</div><div className="label">Membres de l'équipe</div>
+        </div>
+        <div
+          className={`kpi clickable${filtreCarte === 'actives' ? ' selected' : ''}`}
+          role="button"
+          tabIndex={0}
+          onClick={() => toggleFiltreCarte('actives')}
+          onKeyDown={(e) => { if (e.key === 'Enter') toggleFiltreCarte('actives') }}
+          title="Filtrer sur les tâches actives"
+        >
+          <div className="top"><div className="icon-wrap blue"><Icon.task /></div></div><div className="num">{tachesActives}</div><div className="label">Tâches actives</div>
+        </div>
+        <div
+          className={`kpi clickable${filtreCarte === 'validees' ? ' selected' : ''}`}
+          role="button"
+          tabIndex={0}
+          onClick={() => toggleFiltreCarte('validees')}
+          onKeyDown={(e) => { if (e.key === 'Enter') toggleFiltreCarte('validees') }}
+          title="Filtrer sur les tâches terminées"
+        >
+          <div className="top"><div className="icon-wrap green"><Icon.check /></div></div><div className="num">{tachesTerminees}</div><div className="label">Tâches terminées</div>
+        </div>
+        <div
+          className={`kpi clickable${filtreCarte === 'retard' ? ' selected' : ''}`}
+          role="button"
+          tabIndex={0}
+          onClick={() => toggleFiltreCarte('retard')}
+          onKeyDown={(e) => { if (e.key === 'Enter') toggleFiltreCarte('retard') }}
+          title="Filtrer sur les tâches en retard"
+        >
+          <div className="top"><div className="icon-wrap amber"><Icon.clock /></div></div><div className="num">{tachesEnRetard}</div><div className="label">Tâches en retard</div>
+        </div>
         <div className="kpi"><div className="top"><div className="icon-wrap green"><Icon.check /></div></div><div className="num">{tauxCompletion}%</div><div className="label">Taux de complétion</div></div>
       </div>
 
@@ -363,14 +414,22 @@ function DashboardHome({ membres, taches, loadingTaches, membresCount, tachesAct
         <div>
           <div className="card">
             <div className="card-head">
-              <div><h2>Tâches de l'équipe</h2><div className="hint">Description, deadline, priorité et état</div></div>
+              <div>
+                <h2>Tâches de l'équipe</h2>
+                <div className="hint">
+                  {filtreCarte === 'toutes' ? 'Description, deadline, priorité et état' : `Filtré : ${FILTRE_LABELS[filtreCarte]}`}
+                </div>
+              </div>
+              {filtreCarte !== 'toutes' && (
+                <button className="btn btn-ghost btn-sm" onClick={() => setFiltreCarte('toutes')}>Réinitialiser</button>
+              )}
             </div>
             <table>
               <thead><tr><th>Tâche</th><th>Assigné à</th><th>Priorité</th><th>Deadline</th><th>État</th></tr></thead>
               <tbody>
                 {loadingTaches && <tr><td colSpan={5}>Chargement…</td></tr>}
-                {!loadingTaches && taches.length === 0 && <tr><td colSpan={5}>Aucune tâche pour le moment.</td></tr>}
-                {taches.slice(0, 6).map((t) => (
+                {!loadingTaches && tachesAffichees.length === 0 && <tr><td colSpan={5}>Aucune tâche dans ce filtre.</td></tr>}
+                {tachesAffichees.slice(0, 6).map((t) => (
                   <tr key={t.id_tache}>
                     <td><b>{t.titre}</b></td>
                     <td>{t.collaborateur_nom
@@ -381,6 +440,7 @@ function DashboardHome({ membres, taches, loadingTaches, membresCount, tachesAct
                     <td>{formatDateShortFr(t.date_echeance)}</td>
                     <td>
                       <select className="status-select" value={t.statut} onChange={(e) => onChangerStatut(t.id_tache, e.target.value)}>
+
                         {STATUT_OPTIONS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
                       </select>
                     </td>
@@ -538,6 +598,9 @@ function TachesPage({ taches, loadingTaches, membres, activeEquipeId, showToast,
     if (filter === 'en_cours') return t.statut === 'en_cours'
     if (filter === 'validees') return t.statut === 'validee'
     if (filter === 'a_refaire') return t.statut === 'a_refaire'
+    // Même définition que la carte KPI "Tâches en retard" du tableau de bord :
+    // échéance dépassée et tâche pas encore validée.
+    if (filter === 'retard') return t.date_echeance && new Date(t.date_echeance) < new Date() && t.statut !== 'validee'
     return true
   })
 
@@ -584,6 +647,7 @@ function TachesPage({ taches, loadingTaches, membres, activeEquipeId, showToast,
           <button className={filter === 'en_cours' ? 'active' : ''} onClick={() => setFilter('en_cours')}>En cours</button>
           <button className={filter === 'validees' ? 'active' : ''} onClick={() => setFilter('validees')}>Validées</button>
           <button className={filter === 'a_refaire' ? 'active' : ''} onClick={() => setFilter('a_refaire')}>À refaire</button>
+          <button className={filter === 'retard' ? 'active' : ''} onClick={() => setFilter('retard')}>En retard</button>
         </div>
         <table>
           <thead><tr><th>Tâche</th><th>Assignée à</th><th>Priorité</th><th>Deadline</th><th>État</th></tr></thead>

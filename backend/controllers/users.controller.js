@@ -12,7 +12,7 @@ import {
   updateMonIdentite,
   updateCollaborateurPasswordById,
 } from '../models/collaborateur.model.js'
-import { getMonDernierScore } from '../models/evaluationScore.model.js'
+import { getMesScores } from '../models/evaluationScore.model.js'
 import { getBornesPeriode } from '../utils/periode.js'
 import {
   getAllResponsables,
@@ -26,6 +26,41 @@ import {
   updateMonIdentiteResponsable,
   updateResponsablePasswordById,
 } from '../models/responsable.model.js'
+import {
+  getAdminById,
+  getMonProfilAdmin,
+  updateMesPreferencesAdmin,
+  updateMonIdentiteAdmin,
+  updateAdminPasswordById,
+} from '../models/admin.model.js'
+
+// Un même compte peut exister à la fois côté collaborateur et côté responsable
+// (promotion bidirectionnelle — voir promoteToResponsable / ensureCollaborateurAccount,
+// qui créent ce compte miroir avec les mêmes identifiants de connexion). Quand l'un des
+// deux modifie son nom/email depuis "Mon profil", on répercute le changement sur l'autre
+// pour que les deux dashboards restent synchronisés — sinon le responsable ne voit jamais
+// le nouveau nom choisi côté collaborateur (et inversement).
+async function syncIdentiteVersResponsable(compteCollaborateurAvant, { nom, email }) {
+  if (!compteCollaborateurAvant) return
+  const lie = await findResponsableByEmailOrIdentifiant(
+    compteCollaborateurAvant.email,
+    compteCollaborateurAvant.identifiant_esprit || '__none__'
+  )
+  if (lie) {
+    await updateMonIdentiteResponsable(lie.id_responsable, { nom, email })
+  }
+}
+
+async function syncIdentiteVersCollaborateur(compteResponsableAvant, { nom, email }) {
+  if (!compteResponsableAvant) return
+  const lie = await findCollaborateurByEmailOrIdentifiant(
+    compteResponsableAvant.email,
+    compteResponsableAvant.identifiant_esprit || '__none__'
+  )
+  if (lie) {
+    await updateMonIdentite(lie.id_collaborateur, { nom, email })
+  }
+}
 
 // Parse un champ GROUP_CONCAT de la forme "id:nom||id:nom" en liste structurée
 function parseEquipesField(raw, type) {
@@ -230,18 +265,23 @@ export async function ensureCollaborateurAccount(req, res) {
 // Identité, sous-équipes, responsable(s) et dernier score, pour l'utilisateur du token.
 export async function getMe(req, res) {
   try {
+    if (req.user.role === 'admin') {
+      const profil = await getMonProfilAdmin(req.user.id)
+      if (!profil) return res.status(404).json({ message: 'Profil introuvable' })
+      return res.json(profil)
+    }
     if (req.user.role === 'responsable') {
       const profil = await getMonProfilResponsable(req.user.id)
       if (!profil) return res.status(404).json({ message: 'Profil introuvable' })
       return res.json(profil)
     }
     if (req.user.role !== 'collaborateur') {
-      return res.status(403).json({ message: "Réservé aux comptes collaborateur ou responsable." })
+      return res.status(403).json({ message: "Réservé aux comptes admin, collaborateur ou responsable." })
     }
     const profil = await getMonProfil(req.user.id)
     if (!profil) return res.status(404).json({ message: 'Profil introuvable' })
-    const dernierScore = await getMonDernierScore(req.user.id)
-    res.json({ ...profil, dernier_score: dernierScore })
+    const mesScores = await getMesScores(req.user.id, req.query.annee_universitaire, req.query.semestre)
+    res.json({ ...profil, mes_scores: mesScores })
   } catch (err) {
     console.error(err)
     res.status(500).json({ message: 'Erreur serveur' })
@@ -252,18 +292,23 @@ export async function getMe(req, res) {
 export async function updateMyPreferences(req, res) {
   try {
     const { notifications_email, profil_visible } = req.body
+    if (req.user.role === 'admin') {
+      const updated = await updateMesPreferencesAdmin(req.user.id, { notifications_email })
+      if (!updated) return res.status(404).json({ message: 'Profil introuvable' })
+      return res.json(updated)
+    }
     if (req.user.role === 'responsable') {
       const updated = await updateMesPreferencesResponsable(req.user.id, { notifications_email, profil_visible })
       if (!updated) return res.status(404).json({ message: 'Profil introuvable' })
       return res.json(updated)
     }
     if (req.user.role !== 'collaborateur') {
-      return res.status(403).json({ message: "Réservé aux comptes collaborateur ou responsable." })
+      return res.status(403).json({ message: "Réservé aux comptes admin, collaborateur ou responsable." })
     }
     const updated = await updateMesPreferences(req.user.id, { notifications_email, profil_visible })
     if (!updated) return res.status(404).json({ message: 'Profil introuvable' })
-    const dernierScore = await getMonDernierScore(req.user.id)
-    res.json({ ...updated, dernier_score: dernierScore })
+    const mesScores = await getMesScores(req.user.id, req.query.annee_universitaire, req.query.semestre)
+    res.json({ ...updated, mes_scores: mesScores })
   } catch (err) {
     console.error(err)
     res.status(500).json({ message: 'Erreur serveur' })
@@ -282,26 +327,39 @@ export async function updateMyProfil(req, res) {
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return res.status(400).json({ message: 'Adresse email invalide.' })
     }
+    if (req.user.role === 'admin') {
+      const updated = await updateMonIdentiteAdmin(req.user.id, { nom, email })
+      if (!updated) return res.status(404).json({ message: 'Profil introuvable' })
+      return res.json(updated)
+    }
     if (req.user.role === 'responsable') {
       const existant = await findResponsableByEmailOrIdentifiant(email, '__none__')
       if (existant && existant.id_responsable !== req.user.id) {
         return res.status(409).json({ message: 'Cet email est déjà utilisé par un autre compte.' })
       }
+      // Capturé avant la mise à jour : sert à retrouver le compte collaborateur lié
+      // (même email/identifiant), pour lui répercuter le nouveau nom/email.
+      const compteActuel = await getResponsableById(req.user.id)
       const updated = await updateMonIdentiteResponsable(req.user.id, { nom, email })
       if (!updated) return res.status(404).json({ message: 'Profil introuvable' })
+      await syncIdentiteVersCollaborateur(compteActuel, { nom, email })
       return res.json(updated)
     }
     if (req.user.role !== 'collaborateur') {
-      return res.status(403).json({ message: "Réservé aux comptes collaborateur ou responsable." })
+      return res.status(403).json({ message: "Réservé aux comptes admin, collaborateur ou responsable." })
     }
     const existant = await findCollaborateurByEmailOrIdentifiant(email, '__none__')
     if (existant && existant.id_collaborateur !== req.user.id) {
       return res.status(409).json({ message: 'Cet email est déjà utilisé par un autre compte.' })
     }
+    // Capturé avant la mise à jour : sert à retrouver le compte responsable lié
+    // (même email/identifiant), pour lui répercuter le nouveau nom/email.
+    const compteActuel = await getCollaborateurById(req.user.id)
     const updated = await updateMonIdentite(req.user.id, { nom, email })
     if (!updated) return res.status(404).json({ message: 'Profil introuvable' })
-    const dernierScore = await getMonDernierScore(req.user.id)
-    res.json({ ...updated, dernier_score: dernierScore })
+    await syncIdentiteVersResponsable(compteActuel, { nom, email })
+    const mesScores = await getMesScores(req.user.id, req.query.annee_universitaire, req.query.semestre)
+    res.json({ ...updated, mes_scores: mesScores })
   } catch (err) {
     console.error(err)
     res.status(500).json({ message: 'Erreur serveur' })
@@ -319,6 +377,16 @@ export async function updateMyPassword(req, res) {
       return res.status(400).json({ message: PASSWORD_RULES_MESSAGE })
     }
 
+    if (req.user.role === 'admin') {
+      const compte = await getAdminById(req.user.id)
+      if (!compte) return res.status(404).json({ message: 'Profil introuvable' })
+      const ok = await bcrypt.compare(mot_de_passe_actuel, compte.mot_de_passe)
+      if (!ok) return res.status(400).json({ message: 'Mot de passe actuel incorrect.' })
+      const hashed = await bcrypt.hash(nouveau_mot_de_passe, 10)
+      await updateAdminPasswordById(req.user.id, hashed)
+      return res.json({ message: 'Mot de passe mis à jour avec succès.' })
+    }
+
     if (req.user.role === 'responsable') {
       const compte = await getResponsableById(req.user.id)
       if (!compte) return res.status(404).json({ message: 'Profil introuvable' })
@@ -330,7 +398,7 @@ export async function updateMyPassword(req, res) {
     }
 
     if (req.user.role !== 'collaborateur') {
-      return res.status(403).json({ message: "Réservé aux comptes collaborateur ou responsable." })
+      return res.status(403).json({ message: "Réservé aux comptes admin, collaborateur ou responsable." })
     }
     const compte = await getCollaborateurById(req.user.id)
     if (!compte) return res.status(404).json({ message: 'Profil introuvable' })
