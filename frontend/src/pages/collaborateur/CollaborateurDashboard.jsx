@@ -97,6 +97,9 @@ const Icon = {
   calendar: (p) => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...p}><rect x="3" y="4.5" width="18" height="16" rx="2"/><path d="M3 9.5h18"/><path d="M8 2.5v4"/><path d="M16 2.5v4"/></svg>),
   flag: (p) => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...p}><path d="M5 3v18"/><path d="M5 4h11l-2.5 4L16 12H5"/></svg>),
   removeX: (p) => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" {...p}><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>),
+  award: (p) => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...p}><circle cx="12" cy="8" r="6"/><path d="M8.5 13.5 7 22l5-3 5 3-1.5-8.5"/></svg>),
+  book: (p) => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...p}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/></svg>),
+  building: (p) => (<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" {...p}><rect x="4" y="3" width="16" height="18" rx="1.2"/><path d="M9 8h.01M9 12h.01M9 16h.01M15 8h.01M15 12h.01M15 16h.01"/></svg>),
 }
 
 // Icône + couleur de badge pour chacune des 7 catégories d'activité école
@@ -1798,18 +1801,21 @@ function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre }) {
 }
 
 /* ---------- Petit composant partagé : cellule "premier item + N autres" avec bouton détail ---------- */
-function CellLibelle({ items, onOpenDetail }) {
+function CellLibelle({ items, onOpenDetail, accent = 'blue' }) {
   const list = items || []
   if (list.length === 0) {
-    return <span style={{ color: 'var(--text-faint)', fontSize: 12.5 }}>—</span>
+    return <span className="activite-empty">–</span>
   }
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, maxWidth: 170 }}>
-      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12.5 }} title={list.map((i) => i.titre).join(', ')}>
-        {list[0].titre}{list.length > 1 ? ` +${list.length - 1}` : ''}
-      </span>
-      <button className="icon-btn sm" title="Voir la liste" onClick={() => onOpenDetail(list)} style={{ width: 22, height: 22, flexShrink: 0 }}><Icon.eye /></button>
-    </div>
+    <button
+      type="button"
+      className={`activite-chip accent-${accent}`}
+      title={list.map((i) => i.titre).join(', ')}
+      onClick={() => onOpenDetail(list)}
+    >
+      <span className="activite-chip-label">{list[0].titre}</span>
+      {list.length > 1 && <span className="activite-chip-count">+{list.length - 1}</span>}
+    </button>
   )
 }
 
@@ -1835,6 +1841,49 @@ function CategoryListModal({ title, items, onClose }) {
             ))}
           </div>
         </div>
+      </div>
+    </div>
+  )
+}
+
+const ACTIVITE_COLUMN_GROUPS = [
+  { label: 'Encadrement académique', accent: 'blue', cols: [
+    { key: 'encadrements', label: 'Étudiants', icon: 'academic' },
+    { key: 'expertises', label: 'Expertises', icon: 'award' },
+  ] },
+  { label: 'Jurys', accent: 'amber', cols: [
+    { key: 'membre_jury', label: 'Membre', icon: 'gavel' },
+    { key: 'president_jury', label: 'Président', icon: 'gavel' },
+  ] },
+  { label: 'Formations', accent: 'green', cols: [
+    { key: 'formation_ete', label: 'Été', icon: 'book' },
+    { key: 'formation_hiver', label: 'Hiver', icon: 'book' },
+    { key: 'formation_printemps', label: 'Printemps', icon: 'book' },
+  ] },
+  { label: 'Vie associative', accent: 'purple', cols: [
+    { key: 'evenement', label: 'Événements', icon: 'calendar' },
+    { key: 'comite_organisation', label: 'Comités', icon: 'building' },
+  ] },
+]
+const ACTIVITE_KEY_ACCENT = Object.fromEntries(
+  ACTIVITE_COLUMN_GROUPS.flatMap((g) => g.cols.map((c) => [c.key, g.accent]))
+)
+const ACTIVITE_KEY_ICON = Object.fromEntries(
+  ACTIVITE_COLUMN_GROUPS.flatMap((g) => g.cols.map((c) => [c.key, c.icon]))
+)
+
+function DetailSection({ icon, accent = 'blue', label, count, isEmpty, emptyText, children }) {
+  const IconComp = Icon[icon]
+  return (
+    <div className="field full">
+      <div className={`detail-head accent-${accent}`}>
+        {IconComp && <IconComp />}
+        <label>{label}</label>
+        <span className="detail-count">{count}</span>
+      </div>
+      <div style={{ marginTop: 6 }}>
+        {isEmpty && <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>{emptyText}</span>}
+        {children}
       </div>
     </div>
   )
@@ -1871,35 +1920,39 @@ function ActiviteEcoleTousLesCollegues({ showToast, filtreAnnee, filtreSemestre,
         <div><h2>Activité école</h2><div className="hint">{loading ? 'Chargement…' : 'Détail par catégorie'}</div></div>
       </div>
       <div style={{ overflowX: 'auto' }}>
-        <table style={{ marginTop: 8 }}>
+        <table className="activite-table" style={{ marginTop: 8 }}>
           <thead>
-            <tr>
-              <th>Collègue</th>
-              <th>Étudiants encadrés</th>
-              <th>Expertises</th>
-              <th>Membre de jury</th>
-              <th>Président de jury</th>
-              <th>Formation d'été</th>
-              <th>Formation d'hiver</th>
-              <th>Formation de printemps</th>
-              <th>Événements</th>
-              <th>Comités</th>
-              <th></th>
+            <tr className="grp">
+              <th rowSpan={2}>Collègue</th>
+              {ACTIVITE_COLUMN_GROUPS.map((g) => (
+                <th key={g.label} colSpan={g.cols.length} className={`grp-start accent-${g.accent}`}>{g.label}</th>
+              ))}
+              <th rowSpan={2}></th>
+            </tr>
+            <tr className="sub">
+              {ACTIVITE_COLUMN_GROUPS.map((g) => g.cols.map((c, i) => {
+                const ColIcon = Icon[c.icon]
+                return (
+                  <th key={c.key} className={i === 0 ? 'grp-start' : ''}>
+                    <span className={`col-label accent-${g.accent}`}>{ColIcon && <ColIcon />}{c.label}</span>
+                  </th>
+                )
+              }))}
             </tr>
           </thead>
           <tbody>
             {filtered.map((p) => (
               <tr key={p.id}>
                 <td><div className="name-cell"><div className="avatar sm">{initials(p.nom)}</div><span className="n">{p.nom}</span></div></td>
-                <td><CellLibelle items={dansAnnee(p.encadrements)} onOpenDetail={(items) => setCategoryModal({ title: `Étudiants encadrés — ${p.nom}`, items })} /></td>
-                <td><CellLibelle items={p.expertises} onOpenDetail={(items) => setCategoryModal({ title: `Expertises — ${p.nom}`, items })} /></td>
-                <td><CellLibelle items={dansPeriode(p.membre_jury)} onOpenDetail={(items) => setCategoryModal({ title: `Membre de jury — ${p.nom}`, items })} /></td>
-                <td><CellLibelle items={dansPeriode(p.president_jury)} onOpenDetail={(items) => setCategoryModal({ title: `Président de jury — ${p.nom}`, items })} /></td>
-                <td><CellLibelle items={dansPeriode(p.formation_ete)} onOpenDetail={(items) => setCategoryModal({ title: `Formation d'été — ${p.nom}`, items })} /></td>
-                <td><CellLibelle items={dansPeriode(p.formation_hiver)} onOpenDetail={(items) => setCategoryModal({ title: `Formation d'hiver — ${p.nom}`, items })} /></td>
-                <td><CellLibelle items={dansPeriode(p.formation_printemps)} onOpenDetail={(items) => setCategoryModal({ title: `Formation de printemps — ${p.nom}`, items })} /></td>
-                <td><CellLibelle items={dansPeriode(p.evenement)} onOpenDetail={(items) => setCategoryModal({ title: `Événements — ${p.nom}`, items })} /></td>
-                <td><CellLibelle items={dansPeriode(p.comite_organisation)} onOpenDetail={(items) => setCategoryModal({ title: `Comités — ${p.nom}`, items })} /></td>
+                <td className="grp-start"><CellLibelle items={dansAnnee(p.encadrements)} accent="blue" onOpenDetail={(items) => setCategoryModal({ title: `Étudiants encadrés — ${p.nom}`, items })} /></td>
+                <td><CellLibelle items={p.expertises} accent="blue" onOpenDetail={(items) => setCategoryModal({ title: `Expertises — ${p.nom}`, items })} /></td>
+                <td className="grp-start"><CellLibelle items={dansPeriode(p.membre_jury)} accent="amber" onOpenDetail={(items) => setCategoryModal({ title: `Membre de jury — ${p.nom}`, items })} /></td>
+                <td><CellLibelle items={dansPeriode(p.president_jury)} accent="amber" onOpenDetail={(items) => setCategoryModal({ title: `Président de jury — ${p.nom}`, items })} /></td>
+                <td className="grp-start"><CellLibelle items={dansPeriode(p.formation_ete)} accent="green" onOpenDetail={(items) => setCategoryModal({ title: `Formation d'été — ${p.nom}`, items })} /></td>
+                <td><CellLibelle items={dansPeriode(p.formation_hiver)} accent="green" onOpenDetail={(items) => setCategoryModal({ title: `Formation d'hiver — ${p.nom}`, items })} /></td>
+                <td><CellLibelle items={dansPeriode(p.formation_printemps)} accent="green" onOpenDetail={(items) => setCategoryModal({ title: `Formation de printemps — ${p.nom}`, items })} /></td>
+                <td className="grp-start"><CellLibelle items={dansPeriode(p.evenement)} accent="purple" onOpenDetail={(items) => setCategoryModal({ title: `Événements — ${p.nom}`, items })} /></td>
+                <td><CellLibelle items={dansPeriode(p.comite_organisation)} accent="purple" onOpenDetail={(items) => setCategoryModal({ title: `Comités — ${p.nom}`, items })} /></td>
                 <td>
                   <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                     <button className="icon-btn sm" title="Voir le détail" onClick={() => setSelected(p)}><Icon.eye /></button>
@@ -1966,51 +2019,48 @@ function CollegueDetail({ professeur, onClose, showToast, filtreAnnee, filtreSem
             <div style={{ padding: 20, color: 'var(--text-faint)' }}>Chargement…</div>
           ) : (
             <div className="form-grid">
-              <div className="field full">
-                <label>Expertises ({detail.expertises.length})</label>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
-                  {detail.expertises.length === 0 && <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>Aucune expertise renseignée</span>}
+              <DetailSection
+                icon="academic" accent="blue" label="Étudiants encadrés" count={encadrementsFiltres.length}
+                isEmpty={encadrementsFiltres.length === 0}
+                emptyText={detail.encadrements.length === 0 ? 'Aucun étudiant encadré' : 'Aucun étudiant encadré sur cette période'}
+              >
+                {encadrementsFiltres.map((enc) => (
+                  <div key={enc.id_encadrement} className="detail-entry accent-blue">
+                    <b>{enc.nom_etudiant}</b>
+                    <span className="detail-entry-meta">
+                      {enc.sujet ? `${enc.sujet} · ` : ''}{enc.type}{enc.annee_universitaire ? ` · ${enc.annee_universitaire}` : ''}
+                    </span>
+                  </div>
+                ))}
+              </DetailSection>
+
+              <DetailSection
+                icon="award" accent="blue" label="Expertises" count={detail.expertises.length}
+                isEmpty={detail.expertises.length === 0} emptyText="Aucune expertise renseignée"
+              >
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {detail.expertises.map((e) => (
                     <span key={e.id_expertise} className="role-pill">{e.libelle}</span>
                   ))}
                 </div>
-              </div>
-
-              <div className="field full">
-                <label>Étudiants encadrés ({encadrementsFiltres.length})</label>
-                <div style={{ marginTop: 4 }}>
-                  {encadrementsFiltres.length === 0 && <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>{detail.encadrements.length === 0 ? 'Aucun étudiant encadré' : 'Aucun étudiant encadré sur cette période'}</span>}
-                  {encadrementsFiltres.map((enc) => (
-                    <div key={enc.id_encadrement} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
-                      <div>
-                        <b>{enc.nom_etudiant}</b>
-                        <span style={{ color: 'var(--text-faint)', fontSize: 12, marginLeft: 8 }}>
-                          {enc.sujet ? `${enc.sujet} · ` : ''}{enc.type}{enc.annee_universitaire ? ` · ${enc.annee_universitaire}` : ''}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              </DetailSection>
 
               {Object.keys(ACTIVITE_LABELS).map((type) => {
                 const list = (detail[type] || []).filter((a) => estDansPeriode(a.date_activite, filtreAnnee, filtreSemestre))
+                const accent = ACTIVITE_KEY_ACCENT[type] || 'blue'
                 return (
-                  <div className="field full" key={type}>
-                    <label>{ACTIVITE_LABELS[type]} ({list.length})</label>
-                    <div style={{ marginTop: 4 }}>
-                      {list.length === 0 && <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>Aucune entrée sur cette période</span>}
-                      {list.map((a) => (
-                        <div key={a.id_activite} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
-                          <div>
-                            <b>{a.titre}</b>
-                            {type === 'evenement' && a.role && <span style={{ color: 'var(--text-faint)', fontSize: 12, marginLeft: 8 }}>· Rôle : {a.role}</span>}
-                            {a.date_activite && <span style={{ color: 'var(--text-faint)', fontSize: 12, marginLeft: 8 }}>{formatDateShortFr(a.date_activite)}</span>}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                  <DetailSection
+                    key={type} icon={ACTIVITE_KEY_ICON[type]} accent={accent} label={ACTIVITE_LABELS[type]} count={list.length}
+                    isEmpty={list.length === 0} emptyText="Aucune entrée sur cette période"
+                  >
+                    {list.map((a) => (
+                      <div key={a.id_activite} className={`detail-entry accent-${accent}`}>
+                        <b>{a.titre}</b>
+                        {type === 'evenement' && a.role && <span className="detail-entry-meta">· Rôle : {a.role}</span>}
+                        {a.date_activite && <span className="detail-entry-meta">{formatDateShortFr(a.date_activite)}</span>}
+                      </div>
+                    ))}
+                  </DetailSection>
                 )
               })}
             </div>

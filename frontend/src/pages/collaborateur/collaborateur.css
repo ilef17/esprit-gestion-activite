@@ -264,6 +264,58 @@
 .admin-root .name-cell .n { font-weight:600; font-size:13px; }
 .admin-root .name-cell .r { font-size:11px; color:var(--text-faint); }
 
+/* Activité école : en-têtes de table groupés par catégorie + cellules-pilules */
+.admin-root .activite-table thead tr.grp th {
+  text-align:center; font-size:9.5px; letter-spacing:.06em; text-transform:uppercase;
+  font-weight:700; color:var(--text-faint); background:var(--card);
+  padding:10px 14px 6px; border-bottom:1px solid var(--border); border-top:1px solid var(--border);
+}
+.admin-root .activite-table thead tr.grp th:first-child { text-align:left; background:var(--bg); }
+.admin-root .activite-table thead tr.sub th {
+  text-align:center; padding:2px 14px 10px; background:var(--card); border-bottom:1px solid var(--border);
+  font-size:10.5px; text-transform:none; letter-spacing:0; font-weight:600; color:var(--text-muted);
+}
+.admin-root .activite-table thead tr.sub th .col-label { display:inline-flex; align-items:center; gap:5px; justify-content:center; }
+.admin-root .activite-table thead tr.sub th .col-label svg { width:13px; height:13px; color:var(--text-faint); flex-shrink:0; }
+.admin-root .activite-table th.grp-start,
+.admin-root .activite-table td.grp-start { border-left:1px solid var(--border); }
+.admin-root .activite-table tbody td { text-align:center; }
+.admin-root .activite-table tbody td:first-child { text-align:left; }
+
+.admin-root .activite-chip {
+  display:inline-flex; align-items:center; gap:6px; max-width:150px; margin:0 auto;
+  padding:5px 10px; border-radius:999px; background:var(--bg); border:1px solid transparent;
+  font-family:'Inter'; font-size:12px; font-weight:600; color:var(--text); cursor:pointer;
+  transition:background .15s ease, border-color .15s ease, color .15s ease;
+}
+.admin-root .activite-chip-label { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.admin-root .activite-chip-count {
+  flex-shrink:0; font-size:10px; font-weight:700; color:var(--text-faint); background:var(--card);
+  border-radius:999px; padding:1px 6px; transition:background .15s ease, color .15s ease;
+}
+.admin-root .activite-empty { color:var(--text-faint); font-size:13px; }
+
+/* Variantes de couleur par catégorie (encadrement=bleu, jurys=ambre, formations=vert, vie associative=violet) */
+.admin-root .activite-table thead tr.grp th.accent-blue { background:var(--blue-tint); color:#1D4ED8; }
+.admin-root .activite-table thead tr.grp th.accent-amber { background:var(--amber-tint); color:#9A6600; }
+.admin-root .activite-table thead tr.grp th.accent-green { background:var(--green-tint); color:var(--green); }
+.admin-root .activite-table thead tr.grp th.accent-purple { background:#F1F0FF; color:#5B4CC4; }
+
+.admin-root .col-label.accent-blue svg { color:#1D4ED8; }
+.admin-root .col-label.accent-amber svg { color:#9A6600; }
+.admin-root .col-label.accent-green svg { color:var(--green); }
+.admin-root .col-label.accent-purple svg { color:#5B4CC4; }
+
+.admin-root .activite-chip.accent-blue { background:var(--blue-tint); color:#1D4ED8; }
+.admin-root .activite-chip.accent-blue:hover { background:#dce9ff; border-color:#bcd6ff; }
+.admin-root .activite-chip.accent-amber { background:var(--amber-tint); color:#9A6600; }
+.admin-root .activite-chip.accent-amber:hover { background:#ffe8b8; border-color:#ffd98a; }
+.admin-root .activite-chip.accent-green { background:var(--green-tint); color:#178A4F; }
+.admin-root .activite-chip.accent-green:hover { background:#d3f3e3; border-color:#aee7cb; }
+.admin-root .activite-chip.accent-purple { background:#F1F0FF; color:#5B4CC4; }
+.admin-root .activite-chip.accent-purple:hover { background:#e2e0ff; border-color:#cbc8ff; }
+.admin-root .activite-chip-count { background:rgba(255,255,255,.65); }
+
   /* list items (requests / tasks) */
 .admin-root .list { display:flex; flex-direction:column; }
 .admin-root .list-item { padding:14px 20px; border-bottom:1px solid var(--border); display:flex; gap:14px; align-items:flex-start; }
@@ -307,6 +359,31 @@
 .admin-root .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:14px; padding:4px 20px 20px; }
 .admin-root .form-grid .full { grid-column:1/-1; }
 .admin-root .field label { display:block; font-size:11.5px; font-weight:700; color:var(--text-muted); margin-bottom:6px; }
+
+/* Vue d'ensemble (modale collègue) : en-têtes de section colorés + entrées avec liseré */
+.admin-root .detail-head { display:flex; align-items:center; gap:7px; margin-bottom:8px; }
+.admin-root .detail-head label { display:inline; margin-bottom:0; font-size:12.5px; color:var(--text); font-weight:700; }
+.admin-root .detail-head svg { width:15px; height:15px; flex-shrink:0; }
+.admin-root .detail-count {
+  font-size:10.5px; font-weight:700; color:var(--text-faint); background:var(--bg);
+  border-radius:999px; padding:1px 7px; margin-left:auto;
+}
+.admin-root .detail-head.accent-blue svg { color:#1D4ED8; }
+.admin-root .detail-head.accent-amber svg { color:#9A6600; }
+.admin-root .detail-head.accent-green svg { color:var(--green); }
+.admin-root .detail-head.accent-purple svg { color:#5B4CC4; }
+
+.admin-root .detail-entry {
+  display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;
+  padding:8px 12px; margin-bottom:6px; border-radius:var(--radius-sm); background:var(--bg);
+  border-left:3px solid transparent; font-size:13px;
+}
+.admin-root .detail-entry:last-child { margin-bottom:0; }
+.admin-root .detail-entry.accent-blue { border-left-color:var(--blue); }
+.admin-root .detail-entry.accent-amber { border-left-color:var(--amber); }
+.admin-root .detail-entry.accent-green { border-left-color:var(--green); }
+.admin-root .detail-entry.accent-purple { border-left-color:#5B4CC4; }
+.admin-root .detail-entry-meta { color:var(--text-faint); font-size:12px; margin-left:8px; }
 .admin-root .field input, .admin-root .field textarea, .admin-root .field select {
     width:100%; font-family:'Inter'; font-size:13px; padding:10px 12px; border-radius:var(--radius-sm);
     border:1px solid var(--border); background:var(--bg); color:var(--text);

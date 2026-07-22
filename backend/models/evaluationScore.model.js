@@ -109,22 +109,13 @@ export async function getScores({ sousEquipeId, type = 'up', annee_universitaire
   const cfg = teamConfig(type)
   const opts = { sousEquipeId, type, annee_universitaire, semestre }
 
-  let { sql, params } = buildScoresQuery(cfg, { ...opts, applyPeriode: true })
-  let [rows] = await pool.query(sql, params)
-
-  // Repli : si aucune évaluation n'existe pour la période sélectionnée sur cette
-  // équipe, on récupère la période la plus récente déjà calculée pour cette
-  // équipe plutôt que de renvoyer une liste vide — évite l'état "Aucun score
-  // calculé" sur le dashboard alors que des évaluations existent, juste pas
-  // pour le semestre affiché en haut de page.
-  if (rows.length === 0 && sousEquipeId && (annee_universitaire || semestre)) {
-    const fallback = buildScoresQuery(cfg, { ...opts, applyPeriode: false })
-    const [allRows] = await pool.query(fallback.sql, fallback.params)
-    if (allRows.length) {
-      const { annee_universitaire: latestAnnee, semestre: latestSemestre } = allRows[0]
-      rows = allRows.filter((r) => r.annee_universitaire === latestAnnee && r.semestre === latestSemestre)
-    }
-  }
+  // Filtrage strict sur la période demandée : si aucune évaluation n'existe pour
+  // l'année/semestre sélectionné(e), on renvoie une liste vide plutôt que de
+  // substituer silencieusement une autre période — le dashboard affiche
+  // désormais la période choisie et un repli invisible induirait l'utilisateur
+  // en erreur (des scores d'une autre année affichés sous le mauvais libellé).
+  const { sql, params } = buildScoresQuery(cfg, { ...opts, applyPeriode: true })
+  const [rows] = await pool.query(sql, params)
 
   return rows.map((r) => ({
     ...r,
