@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext.jsx'
 import EspritLogo from '../../components/EspritLogo.jsx'
 import NotificationBell from '../../components/NotificationBell.jsx'
 import { getPasswordChecklist, isPasswordStrong, PASSWORD_RULES_MESSAGE } from '../../utils/passwordrules.js'
+import StatsDashboard from '../../components/dashboard/StatsDashboard.jsx'
 import {
   getMonActiviteEcole,
   addMonExpertise,
@@ -321,17 +322,23 @@ function CollaborateurDashboard() {
         <main className="main">
           <div className="content">
             {activePage === 'taches' && (
-              <MesTachesHub
-                showToast={showToast}
-                taches={taches}
-                loading={tachesLoading}
-                savingId={savingId}
-                changerStatut={changerStatutTache}
-                currentUserId={user?.id_collaborateur}
-                demandesCount={demandesCount}
-                filtreAnnee={filtreAnnee}
-                filtreSemestre={filtreSemestre}
-              />
+              <>
+                <MesTachesHub
+                  showToast={showToast}
+                  taches={taches}
+                  loading={tachesLoading}
+                  savingId={savingId}
+                  changerStatut={changerStatutTache}
+                  currentUserId={user?.id_collaborateur}
+                  demandesCount={demandesCount}
+                  filtreAnnee={filtreAnnee}
+                  filtreSemestre={filtreSemestre}
+                />
+                <div className="card">
+                  <div className="card-head"><div><h2>Statistiques (Power BI natif)</h2><div className="hint">Mon espace</div></div></div>
+                  <div style={{ padding: '0 20px 20px' }}><StatsDashboard scope="mon-espace" annee={filtreAnnee} semestre={filtreSemestre} /></div>
+                </div>
+              </>
             )}
             {activePage === 'horsequipe' && <ActivitesHorsEquipe showToast={showToast} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} />}
             {activePage === 'voeux-pedagogiques' && <VoeuxPedagogiquesCollab showToast={showToast} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} />}

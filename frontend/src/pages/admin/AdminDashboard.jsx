@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useAuth } from '../../context/AuthContext.jsx'
 import EspritLogo from '../../components/EspritLogo.jsx'
+import StatsDashboard from '../../components/dashboard/StatsDashboard.jsx'
 import {
   getSousEquipesDetaillees,
   getSousEquipe,
@@ -410,19 +411,37 @@ export default function AdminDashboard() {
           </div>
 
           <div className="content">
-            {activePage === 'dashboard' && (
-              <DashboardHome
-                teams={sousEquipes}
-                horsUpTeams={equipesHorsUp}
-                loadingTeams={loadingTeams}
-                users={users}
-                demandes={demandes}
-                filtreAnnee={filtreAnnee}
-                filtreSemestre={filtreSemestre}
-                onAnneeChange={setFiltreAnnee}
-                onSemestreChange={setFiltreSemestre}
-                onNavigate={goTo}
-              />
+           {activePage === 'dashboard' && (
+              <>
+                <DashboardHome
+                  teams={sousEquipes}
+                  horsUpTeams={equipesHorsUp}
+                  loadingTeams={loadingTeams}
+                  users={users}
+                  demandes={demandes}
+                  filtreAnnee={filtreAnnee}
+                  filtreSemestre={filtreSemestre}
+                  onAnneeChange={setFiltreAnnee}
+                  onSemestreChange={setFiltreSemestre}
+                  onNavigate={goTo}
+                />
+                <div className="card" style={{ marginTop: 16 }}>
+                  <div className="card-head"><div><h2>Statistiques (Power BI natif)</h2><div className="hint">Vue globale</div></div></div>
+                  <div style={{ padding: '0 20px 20px' }}><StatsDashboard scope="global" annee={filtreAnnee} semestre={filtreSemestre} /></div>
+                </div>
+                <div className="card">
+                  <div className="card-head"><div><h2>Par collaborateur</h2></div></div>
+                  <div style={{ padding: '0 20px 20px' }}><StatsDashboard scope="collaborateur" annee={filtreAnnee} semestre={filtreSemestre} /></div>
+                </div>
+                <div className="card">
+                  <div className="card-head"><div><h2>Par sous-équipe</h2></div></div>
+                  <div style={{ padding: '0 20px 20px' }}><StatsDashboard scope="sous-equipe" annee={filtreAnnee} semestre={filtreSemestre} /></div>
+                </div>
+                <div className="card">
+                  <div className="card-head"><div><h2>État d'avancement</h2></div></div>
+                  <div style={{ padding: '0 20px 20px' }}><StatsDashboard scope="avancement" annee={filtreAnnee} semestre={filtreSemestre} /></div>
+                </div>
+              </>
             )}
             {activePage === 'utilisateurs' && (
               <Utilisateurs

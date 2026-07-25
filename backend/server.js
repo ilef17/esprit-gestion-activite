@@ -14,6 +14,7 @@ import rapportsRoutes from './routes/rapports.routes.js'
 import parametresRoutes from './routes/parametres.routes.js'
 import sauvegardesRoutes from './routes/sauvegardes.routes.js'
 import powerbiRoutes from './routes/powerbi.routes.js'
+import dashboardRoutes from './routes/dashboard.routes.js'
 import activiteEcoleRoutes from './routes/Activiteecole.routes.js'
 import voeuxPedagogiquesRoutes from './routes/voeuxPedagogiques.routes.js'
 import notificationsRoutes from './routes/notifications.routes.js'
@@ -42,6 +43,7 @@ app.use('/api/rapports', rapportsRoutes)
 app.use('/api/parametres', parametresRoutes)
 app.use('/api/sauvegardes', sauvegardesRoutes)
 app.use('/api/powerbi', powerbiRoutes)
+app.use('/api/dashboard', dashboardRoutes)
 app.use('/api/activite-ecole', activiteEcoleRoutes)
 app.use('/api/voeux-pedagogiques', voeuxPedagogiquesRoutes)
 app.use('/api/notifications', notificationsRoutes)

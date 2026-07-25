@@ -7,7 +7,8 @@ import {
   getStatsImplication,
   getTachesNonAssignees,
 } from '../models/tache.model.js'
-import { getSousEquipesByResponsable, sousEquipeAppartientAuResponsable, getSousEquipeMembres } from '../models/sousEquipe.model.js'
+import { getSousEquipesByResponsable, sousEquipeAppartientAuResponsable, getSousEquipeMembres, getSousEquipeById } from '../models/sousEquipe.model.js'
+import pool from '../config/db.js'
 import { getNbClassesParCollaborateur } from '../models/voeuPedagogique.model.js'
 import { creerNotification, getNomAuteur } from '../models/notification.model.js'
 
@@ -27,6 +28,52 @@ async function notifierTacheAssignee(tache, auteur) {
     })
   } catch (err) {
     console.error('Erreur notification tâche assignée:', err)
+  }
+}
+
+// Notifie le responsable de la sous-équipe qu'un collaborateur a signalé un
+// problème de coordination sur une tâche — c'était l'événement manquant : aucun
+// code n'envoyait jamais de notification à un responsable, uniquement aux
+// collaborateurs (tache_assignee) et via les vœux pédagogiques.
+async function notifierResponsableProblemeCoordination(tache, idCollaborateur) {
+  if (!tache?.id_sous_equipe) return
+  try {
+    const sousEquipe = await getSousEquipeById(tache.id_sous_equipe)
+    if (!sousEquipe?.id_responsable) return
+    const [rows] = await pool.query('SELECT nom FROM collaborateur WHERE id_collaborateur = ?', [idCollaborateur])
+    const collaborateurNom = rows[0]?.nom || 'Un collaborateur'
+    await creerNotification({
+      id_utilisateur: sousEquipe.id_responsable,
+      type_utilisateur: 'responsable',
+      type: 'probleme_coordination',
+      titre: 'Problème de coordination signalé',
+      message: `${collaborateurNom} a signalé un problème de coordination sur la tâche "${tache.titre}"`,
+      lien_page: 'taches',
+    })
+  } catch (err) {
+    console.error('Erreur notification problème de coordination:', err)
+  }
+}
+
+// Notifie le responsable de la sous-équipe qu'un collaborateur vient de terminer
+// (valider) une de ses tâches — même principe que ci-dessus.
+async function notifierResponsableTacheValidee(tache, idCollaborateur) {
+  if (!tache?.id_sous_equipe) return
+  try {
+    const sousEquipe = await getSousEquipeById(tache.id_sous_equipe)
+    if (!sousEquipe?.id_responsable) return
+    const [rows] = await pool.query('SELECT nom FROM collaborateur WHERE id_collaborateur = ?', [idCollaborateur])
+    const collaborateurNom = rows[0]?.nom || 'Un collaborateur'
+    await creerNotification({
+      id_utilisateur: sousEquipe.id_responsable,
+      type_utilisateur: 'responsable',
+      type: 'tache_validee',
+      titre: 'Tâche terminée',
+      message: `${collaborateurNom} a terminé la tâche "${tache.titre}"`,
+      lien_page: 'taches',
+    })
+  } catch (err) {
+    console.error('Erreur notification tâche terminée:', err)
   }
 }
 
@@ -120,6 +167,12 @@ export async function editTache(req, res) {
         statut,
         membre_concerne: statut === 'probleme_coordination' ? membre_concerne.trim() : null,
       })
+      if (statut === 'probleme_coordination') {
+        notifierResponsableProblemeCoordination(updated, req.user.id)
+      }
+      if (statut === 'validee') {
+        notifierResponsableTacheValidee(updated, req.user.id)
+      }
       return res.json(updated)
     }
     const tacheAvant = await getTacheById(req.params.id)

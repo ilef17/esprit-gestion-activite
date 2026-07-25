@@ -412,5 +412,25 @@ export async function changerMonMotDePasse(payload) {
   const res = await api.patch('/users/me/mot-de-passe', payload)
   return res.data
 }
-
+/* ---------- Dashboards (natifs, remplacent l'embed Power BI) ---------- */
+export async function getDashboardVueGlobale(annee_universitaire, semestre) {
+  const res = await api.get('/dashboard/vue-globale', { params: { annee_universitaire, semestre } })
+  return res.data
+}
+export async function getDashboardParCollaborateur(annee_universitaire, semestre) {
+  const res = await api.get('/dashboard/par-collaborateur', { params: { annee_universitaire, semestre } })
+  return res.data
+}
+export async function getDashboardParSousEquipe(annee_universitaire, semestre) {
+  const res = await api.get('/dashboard/par-sous-equipe', { params: { annee_universitaire, semestre } })
+  return res.data
+}
+export async function getDashboardEtatAvancement(annee_universitaire, semestre) {
+  const res = await api.get('/dashboard/etat-avancement', { params: { annee_universitaire, semestre } })
+  return res.data
+}
+export async function getDashboardMonEspace(annee_universitaire, semestre) {
+  const res = await api.get('/dashboard/mon-espace', { params: { annee_universitaire, semestre } })
+  return res.data
+}
 export default api

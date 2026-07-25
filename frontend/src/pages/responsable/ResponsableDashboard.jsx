@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useMemo } from 'react'
 import { useAuth } from '../../context/AuthContext.jsx'
 import EspritLogo from '../../components/EspritLogo.jsx'
 import NotificationBell from '../../components/NotificationBell.jsx'
+import StatsDashboard from '../../components/dashboard/StatsDashboard.jsx'
 import {
   getMesSousEquipes,
   getMembresSousEquipe,
@@ -296,18 +297,24 @@ export default function ResponsableDashboard() {
             ) : (
               <>
                 {activePage === 'dashboard' && (
-                  <DashboardHome
-                    membres={membres}
-                    taches={tachesFiltrees}
-                    loadingTaches={loadingTaches}
-                    membresCount={membresCount}
-                    tachesActives={tachesActives}
-                    tachesTerminees={tachesTerminees}
-                    tachesEnRetard={tachesEnRetard}
-                    tauxCompletion={tauxCompletion}
-                    onChangerStatut={changerStatutTache}
-                    onNavigate={setActivePage}
-                  />
+                  <>
+                    <DashboardHome
+                      membres={membres}
+                      taches={tachesFiltrees}
+                      loadingTaches={loadingTaches}
+                      membresCount={membresCount}
+                      tachesActives={tachesActives}
+                      tachesTerminees={tachesTerminees}
+                      tachesEnRetard={tachesEnRetard}
+                      tauxCompletion={tauxCompletion}
+                      onChangerStatut={changerStatutTache}
+                      onNavigate={setActivePage}
+                    />
+                    <div className="card">
+                      <div className="card-head"><div><h2>Statistiques (Power BI natif)</h2><div className="hint">Ma sous-équipe</div></div></div>
+                      <div style={{ padding: '0 20px 20px' }}><StatsDashboard scope="sous-equipe" annee={filtreAnnee} semestre={filtreSemestre} /></div>
+                    </div>
+                  </>
                 )}
                 {activePage === 'mon-equipe' && (
                   <MonEquipe
