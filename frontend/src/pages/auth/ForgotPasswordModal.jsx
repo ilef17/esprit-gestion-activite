@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import ReCAPTCHA from 'react-google-recaptcha'
 import { forgotPassword, verifyResetCode, resetPassword } from '../../services/api.js'
 import { getPasswordChecklist, isPasswordStrong, PASSWORD_RULES_MESSAGE } from '../../utils/passwordrules.js'
+import { useConfirm } from '../../hooks/useConfirm.jsx'
 
 const ROLE_LABELS = {
   collaborateur: 'Collaborateur',
@@ -36,6 +37,26 @@ function ForgotPasswordModal({ role, onClose }) {
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
 
+  const { confirm, ConfirmDialog } = useConfirm()
+
+  // Ferme sans demander si rien n'a été saisi à l'étape en cours ; sinon confirme,
+  // pour ne pas perdre la saisie à cause d'un clic accidentel en dehors de la modale.
+  const demanderFermeture = async () => {
+    if (loading) return
+    let contenuNonVide = false
+    if (step === 'email') contenuNonVide = !!email.trim()
+    else if (step === 'code') contenuNonVide = digits.some((d) => d)
+    else if (step === 'newpass') contenuNonVide = !!(password || confirmPassword)
+    if (!contenuNonVide) { onClose(); return }
+    const ok = await confirm({
+      title: 'Fermer sans enregistrer ?',
+      message: 'La saisie en cours sera perdue.',
+      confirmLabel: 'Fermer sans enregistrer',
+      danger: true,
+    })
+    if (ok) onClose()
+  }
+
   useEffect(() => {
     if (cooldown <= 0) return
     const t = setTimeout(() => setCooldown((c) => c - 1), 1000)
@@ -45,11 +66,11 @@ function ForgotPasswordModal({ role, onClose }) {
   // Ferme la modale sur Échap, sauf en plein envoi
   useEffect(() => {
     function onKey(e) {
-      if (e.key === 'Escape' && !loading) onClose()
+      if (e.key === 'Escape' && !loading) demanderFermeture()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [loading, onClose])
+  }, [loading, step, email, digits, password, confirmPassword]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const stepIndex = STEP_ORDER.indexOf(step)
 
@@ -152,9 +173,10 @@ function ForgotPasswordModal({ role, onClose }) {
   }
 
   return (
-    <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget && !loading) onClose() }}>
+    <>
+    <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget && !loading) demanderFermeture() }}>
       <div className="modal-card fp-card">
-        <button type="button" className="modal-close" onClick={onClose} aria-label="Fermer">×</button>
+        <button type="button" className="modal-close" onClick={demanderFermeture} aria-label="Fermer">×</button>
 
         {step !== 'done' && (
           <div className="fp-steps">
@@ -304,6 +326,8 @@ function ForgotPasswordModal({ role, onClose }) {
         )}
       </div>
     </div>
+    {ConfirmDialog}
+    </>
   )
 }
 

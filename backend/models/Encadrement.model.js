@@ -33,11 +33,15 @@ export async function deleteEncadrement(id) {
   await pool.query('DELETE FROM encadrement WHERE id_encadrement = ?', [id])
 }
 
-// Utilisé par la page "Activité école" pour afficher le nombre d'étudiants encadrés par professeur
-export async function countEncadrementsParCollaborateur() {
-  const [rows] = await pool.query(
-    'SELECT id_collaborateur, COUNT(*) AS nb FROM encadrement GROUP BY id_collaborateur'
-  )
+// Utilisé par la page "Activité école" pour afficher le nombre d'étudiants encadrés par
+// professeur. `annee_universitaire` restreint le comptage à cette année (utilisé pour le
+// calcul du score d'évaluation, qui est propre à une période) ; omis, renvoie le total
+// toutes années confondues (utilisé par l'affichage "Activité école" en lecture seule).
+export async function countEncadrementsParCollaborateur(annee_universitaire) {
+  const sql = annee_universitaire
+    ? 'SELECT id_collaborateur, COUNT(*) AS nb FROM encadrement WHERE annee_universitaire = ? GROUP BY id_collaborateur'
+    : 'SELECT id_collaborateur, COUNT(*) AS nb FROM encadrement GROUP BY id_collaborateur'
+  const [rows] = await pool.query(sql, annee_universitaire ? [annee_universitaire] : [])
   return rows
 }
 

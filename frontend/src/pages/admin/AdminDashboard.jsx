@@ -621,7 +621,7 @@ export default function AdminDashboard() {
               <Rapports teams={sousEquipes} users={users} showToast={showToast} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} />
             )}
             {activePage === 'activite-ecole' && (
-              <ActiviteEcole showToast={showToast} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} />
+              <ActiviteEcole showToast={showToast} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} confirm={confirm} />
             )}
             {activePage === 'voeux-pedagogiques' && (
               <VoeuxPedagogiques showToast={showToast} confirm={confirm} />
@@ -1208,7 +1208,19 @@ function Utilisateurs({ users, teams, horsUpTeams, showToast, confirm, onChanged
     setTacheEcheance('')
   }
 
-  const closeTacheModal = () => setTacheModalGroup(null)
+  // Ferme sans demander si rien n'a été saisi ; sinon confirme, pour ne pas perdre
+  // la saisie en cours à cause d'un clic accidentel en dehors de la modale.
+  const demanderFermetureTacheModal = async () => {
+    if (!(tacheTitre.trim() || tacheDescription.trim())) { setTacheModalGroup(null); return }
+    const ok = await confirm({
+      title: 'Fermer sans enregistrer ?',
+      message: 'La tâche en cours de saisie sera perdue.',
+      confirmLabel: 'Fermer sans enregistrer',
+      danger: true,
+    })
+    if (ok) setTacheModalGroup(null)
+  }
+  const closeTacheModal = demanderFermetureTacheModal
 
   // Modale "Liste des tâches" d'un collaborateur : titre, équipe assignée,
   // statut, priorité et date d'échéance de chacune de ses tâches.
@@ -1247,7 +1259,7 @@ function Utilisateurs({ users, teams, horsUpTeams, showToast, confirm, onChanged
           : (tacheModalGroup.upTeams[0] ? tacheModalGroup.upTeams[0].id : null),
       })
       showToast(`Tâche affectée à ${tacheModalGroup.nom} ✓`)
-      closeTacheModal()
+      setTacheModalGroup(null)
     } catch (err) {
       console.error(err)
       showToast("Erreur lors de l'affectation de la tâche")
@@ -1705,10 +1717,20 @@ function SousEquipesPage({ teams, loadingTeams, horsUpTeams, loadingHorsUp, user
     setShowTacheForm(true)
   }
 
-  const closeTacheForm = () => {
-    setShowTacheForm(false)
-    resetTacheForm()
+  // Ferme sans demander si rien n'a été saisi ; sinon confirme, pour ne pas perdre
+  // la saisie en cours à cause d'un clic accidentel en dehors de la modale.
+  const demanderFermetureTacheForm = async () => {
+    const contenuNonVide = tacheTeamKey || tacheCollaborateur || tacheTitre.trim() || tacheDescription.trim()
+    if (!contenuNonVide) { setShowTacheForm(false); resetTacheForm(); return }
+    const ok = await confirm({
+      title: 'Fermer sans enregistrer ?',
+      message: 'La tâche en cours de saisie sera perdue.',
+      confirmLabel: 'Fermer sans enregistrer',
+      danger: true,
+    })
+    if (ok) { setShowTacheForm(false); resetTacheForm() }
   }
+  const closeTacheForm = demanderFermetureTacheForm
 
   const onTacheTeamChange = async (value) => {
     setTacheTeamKey(value)
@@ -1746,7 +1768,8 @@ function SousEquipesPage({ teams, loadingTeams, horsUpTeams, loadingHorsUp, user
         id_sous_equipe: teamType === 'up' ? Number(rawId) : null,
       })
       showToast('Tâche affectée ✓')
-      closeTacheForm()
+      setShowTacheForm(false)
+      resetTacheForm()
     } catch (err) {
       console.error(err)
       showToast("Erreur lors de l'affectation de la tâche")
@@ -1771,10 +1794,20 @@ function SousEquipesPage({ teams, loadingTeams, horsUpTeams, loadingHorsUp, user
     setShowForm(true)
   }
 
-  const closeForm = () => {
-    setShowForm(false)
-    resetForm()
+  // Ferme sans demander si rien n'a été saisi ; sinon confirme, pour ne pas perdre
+  // la saisie en cours à cause d'un clic accidentel en dehors de la modale.
+  const demanderFermetureForm = async () => {
+    const contenuNonVide = nom.trim() || idModule.trim() || !!idResponsable || !!memberPick || memberIds.length > 0
+    if (!contenuNonVide) { setShowForm(false); resetForm(); return }
+    const ok = await confirm({
+      title: 'Fermer sans enregistrer ?',
+      message: 'Les modifications en cours seront perdues.',
+      confirmLabel: 'Fermer sans enregistrer',
+      danger: true,
+    })
+    if (ok) { setShowForm(false); resetForm() }
   }
+  const closeForm = demanderFermetureForm
 
   const startEdit = async (t) => {
     setShowForm(true)
@@ -2183,7 +2216,7 @@ const ACTIVITE_KEY_ICON = Object.fromEntries(
   ACTIVITE_COLUMN_GROUPS.flatMap((g) => g.cols.map((c) => [c.key, c.icon]))
 )
 
-function ActiviteEcole({ showToast, filtreAnnee, filtreSemestre }) {
+function ActiviteEcole({ showToast, filtreAnnee, filtreSemestre, confirm }) {
   const [professeurs, setProfesseurs] = useState([])
   const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState('')
@@ -2289,6 +2322,7 @@ function ActiviteEcole({ showToast, filtreAnnee, filtreSemestre }) {
           onClose={() => setAddingExpertiseFor(null)}
           showToast={showToast}
           onChanged={refresh}
+          confirm={confirm}
         />
       )}
       {categoryModal && (
@@ -2414,11 +2448,24 @@ function ProfesseurDetail({ professeur, onClose, showToast, filtreAnnee, filtreS
 }
 
 /* ---------- Modale dédiée : ajouter/retirer une expertise (admin) ---------- */
-function ExpertiseModal({ professeur, onClose, showToast, onChanged }) {
+function ExpertiseModal({ professeur, onClose, showToast, onChanged, confirm }) {
   const [loading, setLoading] = useState(true)
   const [expertises, setExpertises] = useState([])
   const [expertiseInput, setExpertiseInput] = useState('')
   const [savingExpertise, setSavingExpertise] = useState(false)
+
+  // Ferme sans demander si rien n'a été saisi ; sinon confirme, pour ne pas perdre
+  // la saisie en cours à cause d'un clic accidentel en dehors de la modale.
+  const demanderFermeture = async () => {
+    if (!expertiseInput.trim()) { onClose(); return }
+    const ok = await confirm({
+      title: 'Fermer sans enregistrer ?',
+      message: 'La saisie en cours sera perdue.',
+      confirmLabel: 'Fermer sans enregistrer',
+      danger: true,
+    })
+    if (ok) onClose()
+  }
 
   const refresh = useCallback(() => (
     getProfesseurDetail(professeur.id)
@@ -2459,12 +2506,12 @@ function ExpertiseModal({ professeur, onClose, showToast, onChanged }) {
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={demanderFermeture}>
       <div className="modal-card" onClick={(e) => e.stopPropagation()}>
         <div className="card" style={{ marginBottom: 0 }}>
           <div className="card-head">
             <div><h2>Expertises — {professeur.nom}</h2><div className="hint">Ajouter ou retirer une expertise pour ce collaborateur</div></div>
-            <button className="btn btn-ghost btn-sm" onClick={onClose}>Fermer</button>
+            <button className="btn btn-ghost btn-sm" onClick={demanderFermeture}>Fermer</button>
           </div>
           <div className="form-grid">
             <div className="field full">
@@ -3235,6 +3282,7 @@ function Evaluation({ teams, horsUpTeams, showToast, filtreAnnee, filtreSemestre
   const [justificationEdits, setJustificationEdits] = useState({}) // { [id_collaborateur]: { [id_critere]: texte } }
   const [membres, setMembres] = useState([]) // [{ id_collaborateur, nom }] pour l'équipe courante
   const [notingCritereId, setNotingCritereId] = useState(null) // critère personnalisé actuellement déplié pour notation
+  const [sliderDraft, setSliderDraft] = useState({}) // { [id_critere]: valeur affichée pendant le drag, avant envoi au serveur }
 
   const allTeams = [
     ...teams.map((t) => ({ ...t, type: 'up' })),
@@ -3309,6 +3357,17 @@ function Evaluation({ teams, horsUpTeams, showToast, filtreAnnee, filtreSemestre
       console.error(err)
       showToast('Erreur lors de la mise à jour du critère')
     }
+  }
+
+  // Ne sauvegarde qu'une fois le glissement terminé (mouseup/touchend/keyup),
+  // au lieu d'envoyer une requête à chaque valeur intermédiaire du drag.
+  const commitSlider = (critere, value) => {
+    setValue(critere, value)
+    setSliderDraft((prev) => {
+      const next = { ...prev }
+      delete next[critere.id_critere]
+      return next
+    })
   }
 
   const renameCritere = async (critere, label) => {
@@ -3410,8 +3469,11 @@ function Evaluation({ teams, horsUpTeams, showToast, filtreAnnee, filtreSemestre
                   type="range"
                   min="0"
                   max="100"
-                  value={c.ponderation}
-                  onChange={(e) => setValue(c, e.target.value)}
+                  value={sliderDraft[c.id_critere] ?? c.ponderation}
+                  onChange={(e) => setSliderDraft((prev) => ({ ...prev, [c.id_critere]: e.target.value }))}
+                  onMouseUp={(e) => commitSlider(c, e.target.value)}
+                  onTouchEnd={(e) => commitSlider(c, e.target.value)}
+                  onKeyUp={(e) => commitSlider(c, e.target.value)}
                 />
                 {!c.code && (
                   <div style={{ marginTop: 4 }}>

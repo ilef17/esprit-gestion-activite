@@ -30,12 +30,12 @@ export const JUSTIFICATION_MIN_LENGTH = 20
 // déclarées, nombre d'activités académiques (jury, formation, événement, comité). Comme
 // pour le volume de tâches, chaque collaborateur est comparé à la moyenne de son équipe
 // plutôt qu'à un barème absolu, pour rester cohérent d'une équipe à l'autre.
-async function getActiviteEcoleRatios(membres) {
+async function getActiviteEcoleRatios(membres, { annee_universitaire, semestre } = {}) {
   if (membres.length === 0) return {}
   const [encadrements, expertises, activites] = await Promise.all([
-    countEncadrementsParCollaborateur(),
+    countEncadrementsParCollaborateur(annee_universitaire),
     countExpertisesParCollaborateur(),
-    countActivitesParCollaborateurEtType(),
+    countActivitesParCollaborateurEtType({ annee_universitaire, semestre }),
   ])
   const scoreBrut = {}
   encadrements.forEach((r) => {
@@ -215,7 +215,7 @@ export async function getGrilleNotes(teamId, type = 'up') {
   })
 
   const grille = []
-  const activiteEcoleRatios = await getActiviteEcoleRatios(membres)
+  const activiteEcoleRatios = await getActiviteEcoleRatios(membres, { annee_universitaire, semestre })
   for (const membre of membres) {
     const saved = savedByCollab[membre.id_collaborateur]
     const suggestions = await computeSuggestedRatios({
@@ -296,7 +296,7 @@ export async function calculerScoresEquipe(teamId, notesOverride = {}, type = 'u
   const idSousEquipe = type === 'up' ? teamId : null
   const idUp = type === 'hors_up' ? teamId : null
 
-  const activiteEcoleRatios = await getActiviteEcoleRatios(membres)
+  const activiteEcoleRatios = await getActiviteEcoleRatios(membres, { annee_universitaire, semestre })
 
   // Passe 1 : calcule et VALIDE le score de chaque membre sans rien écrire en base.
   // Une note manuelle manquante ou sans justification suffisante doit bloquer tout le

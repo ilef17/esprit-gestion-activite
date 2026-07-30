@@ -4,7 +4,8 @@ import { useAuth } from '../../context/AuthContext.jsx'
 import EspritLogo from '../../components/EspritLogo.jsx'
 import NotificationBell from '../../components/NotificationBell.jsx'
 import { getPasswordChecklist, isPasswordStrong, PASSWORD_RULES_MESSAGE } from '../../utils/passwordrules.js'
-import { warningPeriode } from '../../utils/dateValidation.js'
+import { warningPeriode, warningDateSeule } from '../../utils/dateValidation.js'
+import { useConfirm } from '../../hooks/useConfirm.jsx'
 import StatsDashboard from '../../components/dashboard/StatsDashboard.jsx'
 import {
   getMonActiviteEcole,
@@ -1915,6 +1916,7 @@ function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre, anneesOption
   // Formulaire ouvert dans une carte modale : 'expertise', 'encadrement', ou l'une des
   // clés de ACTIVITE_LABELS (membre_jury, evenement...). null = aucun formulaire ouvert.
   const [openForm, setOpenForm] = useState(null)
+  const { confirm, ConfirmDialog } = useConfirm()
 
   const refresh = useCallback(() => (
     getMonActiviteEcole()
@@ -2017,6 +2019,29 @@ function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre, anneesOption
     setActiviteForms((prev) => ({ ...prev, [type]: { ...prev[type], [field]: value } }))
   }
 
+  // Ferme le formulaire actuellement ouvert (expertise / encadrement / activité) sans
+  // demander si rien n'a été saisi ; sinon confirme, pour ne pas perdre un clic
+  // accidentel en dehors de la carte.
+  const formulaireEnCours = () => {
+    if (openForm === 'expertise') return !!expertiseInput.trim()
+    if (openForm === 'encadrement') return !!(encNom.trim() || encSujet.trim())
+    if (openForm && ACTIVITE_LABELS[openForm]) {
+      const f = activiteForms[openForm]
+      return !!(f.titre.trim() || f.role.trim())
+    }
+    return false
+  }
+  const demanderFermetureForm = async () => {
+    if (!formulaireEnCours()) { setOpenForm(null); return }
+    const ok = await confirm({
+      title: 'Fermer sans enregistrer ?',
+      message: 'La saisie en cours sera perdue.',
+      confirmLabel: 'Fermer sans enregistrer',
+      danger: true,
+    })
+    if (ok) setOpenForm(null)
+  }
+
   const submitActivite = async (type) => {
     const form = activiteForms[type]
     if (!form.titre.trim()) { showToast('Le titre est requis'); return }
@@ -2059,6 +2084,7 @@ function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre, anneesOption
   const encadrementsFiltres = detail.encadrements.filter((enc) => estDansAnnee(enc.annee_universitaire, filtreAnnee))
 
   return (
+    <>
     <div className="card">
       <div className="card-head">
         <div><h2>Mon activité école</h2><div className="hint">{loading ? 'Chargement…' : 'Gérez vos expertises, encadrements et implication académique'}</div></div>
@@ -2160,12 +2186,12 @@ function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre, anneesOption
       )}
 
       {openForm === 'expertise' && (
-        <div className="modal-overlay" onClick={() => !savingExpertise && setOpenForm(null)}>
+        <div className="modal-overlay" onClick={() => !savingExpertise && demanderFermetureForm()}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440 }}>
             <div className="card" style={{ marginBottom: 0 }}>
               <div className="card-head">
                 <div><h2>Ajouter une expertise</h2></div>
-                <button className="btn btn-ghost btn-sm" type="button" onClick={() => setOpenForm(null)}>Fermer</button>
+                <button className="btn btn-ghost btn-sm" type="button" onClick={demanderFermetureForm}>Fermer</button>
               </div>
               <div className="form-grid">
                 <div className="field full">
@@ -2173,7 +2199,7 @@ function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre, anneesOption
                   <input type="text" placeholder="Ex. Intelligence artificielle" value={expertiseInput} onChange={(e) => setExpertiseInput(e.target.value)} autoFocus />
                 </div>
                 <div className="field full" style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-                  <button className="btn btn-ghost" type="button" disabled={savingExpertise} onClick={() => setOpenForm(null)}>Annuler</button>
+                  <button className="btn btn-ghost" type="button" disabled={savingExpertise} onClick={demanderFermetureForm}>Annuler</button>
                   <button className="btn btn-primary" type="button" disabled={savingExpertise} onClick={submitExpertise}>
                     {savingExpertise ? 'Ajout…' : 'Ajouter'}
                   </button>
@@ -2185,12 +2211,12 @@ function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre, anneesOption
       )}
 
       {openForm === 'encadrement' && (
-        <div className="modal-overlay" onClick={() => !savingEnc && setOpenForm(null)}>
+        <div className="modal-overlay" onClick={() => !savingEnc && demanderFermetureForm()}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
             <div className="card" style={{ marginBottom: 0 }}>
               <div className="card-head">
                 <div><h2>Ajouter un étudiant encadré</h2></div>
-                <button className="btn btn-ghost btn-sm" type="button" onClick={() => setOpenForm(null)}>Fermer</button>
+                <button className="btn btn-ghost btn-sm" type="button" onClick={demanderFermetureForm}>Fermer</button>
               </div>
               <div className="form-grid">
                 <div className="field full">
@@ -2218,7 +2244,7 @@ function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre, anneesOption
                   </select>
                 </div>
                 <div className="field full" style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-                  <button className="btn btn-ghost" type="button" disabled={savingEnc} onClick={() => setOpenForm(null)}>Annuler</button>
+                  <button className="btn btn-ghost" type="button" disabled={savingEnc} onClick={demanderFermetureForm}>Annuler</button>
                   <button className="btn btn-primary" type="button" disabled={savingEnc} onClick={submitEncadrement}>
                     {savingEnc ? 'Ajout…' : 'Ajouter'}
                   </button>
@@ -2230,12 +2256,12 @@ function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre, anneesOption
       )}
 
       {openForm && ACTIVITE_LABELS[openForm] && (
-        <div className="modal-overlay" onClick={() => savingActivite !== openForm && setOpenForm(null)}>
+        <div className="modal-overlay" onClick={() => savingActivite !== openForm && demanderFermetureForm()}>
           <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 460 }}>
             <div className="card" style={{ marginBottom: 0 }}>
               <div className="card-head">
                 <div><h2>Ajouter — {ACTIVITE_LABELS[openForm]}</h2></div>
-                <button className="btn btn-ghost btn-sm" type="button" onClick={() => setOpenForm(null)}>Fermer</button>
+                <button className="btn btn-ghost btn-sm" type="button" onClick={demanderFermetureForm}>Fermer</button>
               </div>
               <div className="form-grid">
                 <div className="field full">
@@ -2252,8 +2278,11 @@ function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre, anneesOption
                   <label>Date</label>
                   <input type="date" value={activiteForms[openForm].date_activite} onChange={(e) => setActiviteField(openForm, 'date_activite', e.target.value)} />
                 </div>
+                {warningDateSeule(activiteForms[openForm].date_activite) && (
+                  <div className="field full"><div className="date-warning">⚠ {warningDateSeule(activiteForms[openForm].date_activite)}</div></div>
+                )}
                 <div className="field full" style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-                  <button className="btn btn-ghost" type="button" disabled={savingActivite === openForm} onClick={() => setOpenForm(null)}>Annuler</button>
+                  <button className="btn btn-ghost" type="button" disabled={savingActivite === openForm} onClick={demanderFermetureForm}>Annuler</button>
                   <button className="btn btn-primary" type="button" disabled={savingActivite === openForm} onClick={() => submitActivite(openForm)}>
                     {savingActivite === openForm ? 'Ajout…' : 'Ajouter'}
                   </button>
@@ -2264,6 +2293,8 @@ function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre, anneesOption
         </div>
       )}
     </div>
+    {ConfirmDialog}
+    </>
   )
 }
 

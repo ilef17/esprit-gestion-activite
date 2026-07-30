@@ -862,6 +862,7 @@ function TachesPage({ taches, loadingTaches, membres, activeEquipeId, activeEqui
           activeEquipeId={activeEquipeId}
           activeEquipeType={activeEquipeType}
           showToast={showToast}
+          confirm={confirm}
           onClose={() => setShowForm(false)}
           onCreated={() => { setShowForm(false); onChanged() }}
         />
@@ -870,9 +871,23 @@ function TachesPage({ taches, loadingTaches, membres, activeEquipeId, activeEqui
   )
 }
 
-function NouvelleTacheModal({ activeEquipeId, activeEquipeType, showToast, onClose, onCreated }) {
+function NouvelleTacheModal({ activeEquipeId, activeEquipeType, showToast, confirm, onClose, onCreated }) {
   const [items, setItems] = useState([{ titre: '', description: '', priorite: 'moyenne', date_echeance: '', collapsed: false }])
   const [saving, setSaving] = useState(false)
+
+  // Ferme sans demander si rien n'a été saisi ; sinon confirme, pour ne pas perdre
+  // le travail d'un clic accidentel en dehors de la modale.
+  const hasContenuNonVide = items.some((it) => it.titre.trim() || it.description.trim())
+  const demanderFermeture = async () => {
+    if (!hasContenuNonVide) { onClose(); return }
+    const ok = await confirm({
+      title: 'Fermer sans enregistrer ?',
+      message: 'Les tâches en cours de saisie seront perdues.',
+      confirmLabel: 'Fermer sans enregistrer',
+      danger: true,
+    })
+    if (ok) onClose()
+  }
 
   const majItem = (index, champ, valeur) => {
     setItems((prev) => prev.map((it, i) => (i === index ? { ...it, [champ]: valeur } : it)))
@@ -925,9 +940,9 @@ function NouvelleTacheModal({ activeEquipeId, activeEquipeType, showToast, onClo
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={demanderFermeture}>
       <div className="modal-card tasks-modal" onClick={(e) => e.stopPropagation()}>
-        <button type="button" className="modal-close" onClick={onClose} aria-label="Fermer">×</button>
+        <button type="button" className="modal-close" onClick={demanderFermeture} aria-label="Fermer">×</button>
         <div className="modal-title">Nouvelle liste de tâches</div>
         <div className="modal-sub">Chaque tâche est créée sans assignation, avec sa propre priorité et échéance. L'équipe reçoit une seule notification (in-app + e-mail) récapitulant toute la liste, et chacun peut choisir la tâche qu'il veut depuis "Mes tâches".</div>
         <form className="form-grid" onSubmit={creerTaches}>
@@ -988,7 +1003,7 @@ function NouvelleTacheModal({ activeEquipeId, activeEquipeType, showToast, onClo
             <button type="button" className="btn btn-ghost btn-sm" onClick={ajouterLigne}>+ Ajouter une tâche à la liste</button>
           </div>
           <div className="field full" style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-            <button type="button" className="btn btn-ghost" onClick={onClose}>Annuler</button>
+            <button type="button" className="btn btn-ghost" onClick={demanderFermeture}>Annuler</button>
             <button className="btn btn-primary" type="submit" disabled={saving}>{saving ? 'Création…' : items.length > 1 ? `Publier la liste (${items.filter((it) => it.titre.trim()).length})` : 'Créer la tâche'}</button>
           </div>
         </form>

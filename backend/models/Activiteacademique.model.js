@@ -63,9 +63,17 @@ export async function deleteActivite(id) {
 
 // Utilisé par la page "Activité école" : nombre d'entrées par professeur ET par type
 // (jury de soutenance / événement / comité d'organisation), en une seule requête.
-export async function countActivitesParCollaborateurEtType() {
-  const [rows] = await pool.query(
-    'SELECT id_collaborateur, type, COUNT(*) AS nb FROM activite_academique GROUP BY id_collaborateur, type'
-  )
+// `periode` ({ annee_universitaire, semestre }) restreint le comptage à cette période
+// (utilisé pour le calcul du score d'évaluation, propre à une période) ; omis, renvoie
+// le total toutes périodes confondues (utilisé par l'affichage "Activité école").
+export async function countActivitesParCollaborateurEtType(periode) {
+  let sql = 'SELECT id_collaborateur, type, COUNT(*) AS nb FROM activite_academique'
+  const params = []
+  if (periode?.annee_universitaire && periode?.semestre) {
+    sql += ' WHERE annee_universitaire = ? AND semestre = ?'
+    params.push(periode.annee_universitaire, periode.semestre)
+  }
+  sql += ' GROUP BY id_collaborateur, type'
+  const [rows] = await pool.query(sql, params)
   return rows
 }

@@ -222,7 +222,8 @@
   }
 .admin-root .card-head { display:flex; align-items:center; justify-content:space-between; padding:18px 20px 14px; }
 .admin-root .card-head h2 { font-size:14.5px; font-weight:700; }
-.admin-root .card-head .hint { font-size:11.5px; color:var(--text-faint); font-weight:500; margin-top:2px; }
+.admin-root .hint { font-size:11.5px; color:var(--text-faint); font-weight:500; line-height:1.5; }
+.admin-root .card-head .hint { margin-top:2px; }
 .admin-root .btn {
     border:none; cursor:pointer; font-family:'Inter'; font-weight:700; font-size:12px;
     padding:9px 15px; border-radius:999px; display:inline-flex; align-items:center; gap:6px;
