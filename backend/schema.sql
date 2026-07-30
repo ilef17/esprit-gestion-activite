@@ -106,41 +106,6 @@ CREATE TABLE IF NOT EXISTS `collaborateur_sousequipe` (
 -- ALTER TABLE `collaborateur_sousequipe` ADD COLUMN `date_affectation` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP;
 
 -- --------------------------------------------------------
--- activite
--- --------------------------------------------------------
-CREATE TABLE IF NOT EXISTS `activite` (
-  `id_activite` int(11) NOT NULL AUTO_INCREMENT,
-  `nom_activite` varchar(150) NOT NULL,
-  `description` text,
-  `id_collaborateur` int(11) DEFAULT NULL,
-  PRIMARY KEY (`id_activite`),
-  KEY `id_collaborateur` (`id_collaborateur`),
-  CONSTRAINT `activite_ibfk_1` FOREIGN KEY (`id_collaborateur`) REFERENCES `collaborateur` (`id_collaborateur`) ON DELETE SET NULL ON UPDATE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- --------------------------------------------------------
--- equipe
--- --------------------------------------------------------
-CREATE TABLE IF NOT EXISTS `equipe` (
-  `id_equipe` int(11) NOT NULL AUTO_INCREMENT,
-  `nom_equipe` varchar(100) NOT NULL,
-  `nombre` int(11) DEFAULT '0',
-  `id_activite` int(11) DEFAULT NULL,
-  PRIMARY KEY (`id_equipe`),
-  KEY `id_activite` (`id_activite`),
-  CONSTRAINT `equipe_ibfk_1` FOREIGN KEY (`id_activite`) REFERENCES `activite` (`id_activite`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- --------------------------------------------------------
--- module
--- --------------------------------------------------------
-CREATE TABLE IF NOT EXISTS `module` (
-  `id_module` int(11) NOT NULL AUTO_INCREMENT,
-  `nom_module` varchar(150) NOT NULL,
-  PRIMARY KEY (`id_module`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- --------------------------------------------------------
 -- up
 -- --------------------------------------------------------
 DROP TABLE IF EXISTS `equipe_hors_up`;
@@ -171,18 +136,6 @@ CREATE TABLE IF NOT EXISTS `collaborateur_equipe_hors_up` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ALTER TABLE `collaborateur_equipe_hors_up` ADD COLUMN `date_affectation` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP;
-
--- --------------------------------------------------------
--- equipe_up (many-to-many)
--- --------------------------------------------------------
-CREATE TABLE IF NOT EXISTS `equipe_up` (
-  `id_equipe` int(11) NOT NULL,
-  `id_up` int(11) NOT NULL,
-  PRIMARY KEY (`id_equipe`,`id_up`),
-  KEY `id_up` (`id_up`),
-  CONSTRAINT `equipe_up_ibfk_1` FOREIGN KEY (`id_equipe`) REFERENCES `equipe` (`id_equipe`) ON DELETE CASCADE,
-  CONSTRAINT `equipe_up_ibfk_2` FOREIGN KEY (`id_up`) REFERENCES `up` (`id_up`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- --------------------------------------------------------
 -- tache  (NOUVELLE TABLE)
@@ -429,33 +382,11 @@ CREATE TABLE IF NOT EXISTS `activite_academique` (
 -- ALTER TABLE `activite_academique` MODIFY `type` enum('jury_soutenance','evenement','comite_organisation','membre_jury','president_jury','formation_ete','formation_hiver','formation_printemps') NOT NULL;
 
 -- --------------------------------------------------------
--- voeu  (NOUVELLE TABLE — préférences de sous-équipe exprimées par un collaborateur,
--- classées par rang, pour une année universitaire et un semestre donnés)
--- --------------------------------------------------------
-CREATE TABLE IF NOT EXISTS `voeu` (
-  `id_voeu` int(11) NOT NULL AUTO_INCREMENT,
-  `id_collaborateur` int(11) NOT NULL,
-  `id_sous_equipe` int(11) NOT NULL,
-  `annee_universitaire` varchar(9) NOT NULL,
-  `semestre` enum('S1','S2') NOT NULL,
-  `rang` int(11) NOT NULL,
-  `date_soumission` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (`id_voeu`),
-  UNIQUE KEY `unique_voeu_periode` (`id_collaborateur`,`annee_universitaire`,`semestre`,`id_sous_equipe`),
-  KEY `id_collaborateur` (`id_collaborateur`),
-  KEY `id_sous_equipe` (`id_sous_equipe`),
-  CONSTRAINT `voeu_ibfk_1` FOREIGN KEY (`id_collaborateur`) REFERENCES `collaborateur` (`id_collaborateur`) ON DELETE CASCADE,
-  CONSTRAINT `voeu_ibfk_2` FOREIGN KEY (`id_sous_equipe`) REFERENCES `sous_equipe` (`id_sous_equipe`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- Migration pour une base déjà existante (ARP en prod) : exécutez ce bloc si la table
--- `voeu` n'existe pas encore (copie du CREATE TABLE ci-dessus, à lancer manuellement) :
--- CREATE TABLE IF NOT EXISTS `voeu` ( ... ) -- voir bloc ci-dessus
-
--- --------------------------------------------------------
 -- Vœux pédagogiques (formulaire dynamique) — campagne_voeux_pedagogiques /
--- question_voeu_pedagogique / option_voeu_pedagogique / reponse_voeu_pedagogique /
--- reponse_valeur_voeu_pedagogique / affectation_voeu_pedagogique
+-- question_voeu_pedagogique / reponse_voeu_pedagogique / affectation_voeu_pedagogique
+-- (voir migration_voeux_pedagogiques.sql pour module_voeu_pedagogique et
+-- reponse_detail_voeu_pedagogique, qui remplacent respectivement les anciennes
+-- option_voeu_pedagogique et reponse_valeur_voeu_pedagogique)
 -- Voir migration_voeux_pedagogiques_v2.sql pour le détail et la mise à jour
 -- d'une base existante (l'ancien questionnaire à 8 questions fixes est
 -- entièrement remplacé par ce formulaire créé par l'admin).
@@ -482,17 +413,6 @@ CREATE TABLE IF NOT EXISTS `question_voeu_pedagogique` (
   CONSTRAINT `question_vp_ibfk_1` FOREIGN KEY (`id_campagne`) REFERENCES `campagne_voeux_pedagogiques` (`id_campagne`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS `option_voeu_pedagogique` (
-  `id_option` int(11) NOT NULL AUTO_INCREMENT,
-  `id_question` int(11) NOT NULL,
-  `libelle` varchar(150) NOT NULL,
-  `ordre` int(11) NOT NULL DEFAULT 0,
-  `classes` JSON DEFAULT NULL,
-  PRIMARY KEY (`id_option`),
-  KEY `id_question` (`id_question`),
-  CONSTRAINT `option_vp_ibfk_1` FOREIGN KEY (`id_question`) REFERENCES `question_voeu_pedagogique` (`id_question`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
 CREATE TABLE IF NOT EXISTS `reponse_voeu_pedagogique` (
   `id_reponse` int(11) NOT NULL AUTO_INCREMENT,
   `id_campagne` int(11) NOT NULL,
@@ -504,21 +424,6 @@ CREATE TABLE IF NOT EXISTS `reponse_voeu_pedagogique` (
   KEY `id_collaborateur` (`id_collaborateur`),
   CONSTRAINT `reponse_vp_ibfk_1` FOREIGN KEY (`id_campagne`) REFERENCES `campagne_voeux_pedagogiques` (`id_campagne`) ON DELETE CASCADE,
   CONSTRAINT `reponse_vp_ibfk_2` FOREIGN KEY (`id_collaborateur`) REFERENCES `collaborateur` (`id_collaborateur`) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS `reponse_valeur_voeu_pedagogique` (
-  `id_valeur` int(11) NOT NULL AUTO_INCREMENT,
-  `id_reponse` int(11) NOT NULL,
-  `id_question` int(11) NOT NULL,
-  `id_option` int(11) DEFAULT NULL,
-  `valeur_texte` varchar(1000) DEFAULT NULL,
-  PRIMARY KEY (`id_valeur`),
-  KEY `id_reponse` (`id_reponse`),
-  KEY `id_question` (`id_question`),
-  KEY `id_option` (`id_option`),
-  CONSTRAINT `reponse_valeur_vp_ibfk_1` FOREIGN KEY (`id_reponse`) REFERENCES `reponse_voeu_pedagogique` (`id_reponse`) ON DELETE CASCADE,
-  CONSTRAINT `reponse_valeur_vp_ibfk_2` FOREIGN KEY (`id_question`) REFERENCES `question_voeu_pedagogique` (`id_question`) ON DELETE CASCADE,
-  CONSTRAINT `reponse_valeur_vp_ibfk_3` FOREIGN KEY (`id_option`) REFERENCES `option_voeu_pedagogique` (`id_option`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Une classe (id_question + id_option + classe) ne peut être affectée qu'une
@@ -534,12 +439,14 @@ CREATE TABLE IF NOT EXISTS `affectation_voeu_pedagogique` (
   UNIQUE KEY `unique_classe_affectee` (`id_question`,`id_option`,`classe`),
   KEY `id_reponse` (`id_reponse`),
   CONSTRAINT `affectation_vp_ibfk_1` FOREIGN KEY (`id_reponse`) REFERENCES `reponse_voeu_pedagogique` (`id_reponse`) ON DELETE CASCADE,
-  CONSTRAINT `affectation_vp_ibfk_2` FOREIGN KEY (`id_question`) REFERENCES `question_voeu_pedagogique` (`id_question`) ON DELETE CASCADE,
-  CONSTRAINT `affectation_vp_ibfk_3` FOREIGN KEY (`id_option`) REFERENCES `option_voeu_pedagogique` (`id_option`) ON DELETE CASCADE
+  CONSTRAINT `affectation_vp_ibfk_2` FOREIGN KEY (`id_question`) REFERENCES `question_voeu_pedagogique` (`id_question`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- Migration pour une base déjà existante : voir migration_voeux_pedagogiques_v2.sql
--- (à lancer manuellement — supprime puis recrée les tables ci-dessus).
+-- NOTE : ce bloc (campagne_voeux_pedagogiques / question_voeu_pedagogique /
+-- reponse_voeu_pedagogique / affectation_voeu_pedagogique) est l'ancienne définition,
+-- entièrement remplacée en base par migration_voeux_pedagogiques.sql (qui ajoute
+-- notamment module_voeu_pedagogique et reponse_detail_voeu_pedagogique). Sur une
+-- base déjà existante, exécutez migration_voeux_pedagogiques.sql plutôt que ce bloc.
 
 -- --------------------------------------------------------
 -- notification (NOUVELLE TABLE)

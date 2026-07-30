@@ -86,6 +86,23 @@ export async function supprimerResponsableSiOrphelin(id) {
   }
 }
 
+// Filet de sécurité pour la page "Utilisateurs" (voir listUsers) : au cas où un compte
+// responsable se serait retrouvé orphelin sans passer par supprimerResponsableSiOrphelin
+// (données existantes créées avant l'ajout de ce nettoyage, ou tout autre chemin non
+// prévu), on nettoie ici TOUS les orphelins d'un coup avant de construire la liste, pour
+// que le badge "Responsable" sans équipe ne reste jamais affiché. On exclut les comptes
+// créés dans les 2 dernières minutes pour ne pas supprimer un responsable qu'on vient de
+// promouvoir (voir SousEquipesPage.submit côté front : promoteToResponsable puis
+// affectation à la sous-équipe se font en deux appels distincts).
+export async function supprimerResponsablesOrphelins() {
+  await pool.query(
+    `DELETE r FROM responsable r
+      WHERE r.date_creation < (NOW() - INTERVAL 2 MINUTE)
+        AND NOT EXISTS (SELECT 1 FROM sous_equipe se WHERE se.id_responsable = r.id_responsable)
+        AND NOT EXISTS (SELECT 1 FROM equipe_hors_up up WHERE up.id_responsable = r.id_responsable)`
+  )
+}
+
 // ---------- Mot de passe oublié ----------
 
 export async function updateResponsablePassword(email, hashedPassword) {

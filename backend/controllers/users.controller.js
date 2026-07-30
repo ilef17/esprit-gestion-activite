@@ -25,6 +25,7 @@ import {
   updateMesPreferencesResponsable,
   updateMonIdentiteResponsable,
   updateResponsablePasswordById,
+  supprimerResponsablesOrphelins,
 } from '../models/responsable.model.js'
 import {
   getAdminById,
@@ -102,6 +103,11 @@ export async function listCollaborateursOptions(req, res) {
 // Vue unifiée pour la page "Utilisateurs" du dashboard admin
 export async function listUsers(req, res) {
   try {
+    // Filet de sécurité : purge d'abord les comptes "Responsable" orphelins (plus
+    // aucune sous-équipe ni équipe hors UP assignée) avant de construire la liste, pour
+    // que leur badge ne reste jamais affiché à tort — voir supprimerResponsablesOrphelins.
+    await supprimerResponsablesOrphelins()
+
     const [collaborateurs, responsables] = await Promise.all([
       getAllCollaborateurs(),
       getAllResponsables(),
