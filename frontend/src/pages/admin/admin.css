@@ -105,11 +105,11 @@
 .admin-root .profile-row { display:flex; align-items:center; gap:10px; padding:8px; border-radius:var(--radius-sm); }
 .admin-root .profile-row:hover { background:var(--bg); cursor:pointer; }
 .admin-root .avatar {
-    width:36px; height:36px; border-radius:50%; background:var(--card); border:2px solid var(--red);
+    width:36px; height:36px; border-radius:50%; background:var(--red-light); border:none;
     display:flex; align-items:center; justify-content:center; font-family:'Poppins'; font-weight:700;
-    font-size:13px; color:var(--red); flex-shrink:0;
+    font-size:13px; color:var(--red-dark); flex-shrink:0; box-shadow:inset 0 0 0 1px rgba(228,3,46,.12);
   }
-.admin-root .avatar.sm { width:28px; height:28px; font-size:11px; border-width:1.6px; }
+.admin-root .avatar.sm { width:28px; height:28px; font-size:11px; }
 .admin-root .profile-meta .pname { font-size:12.5px; font-weight:700; }
 .admin-root .profile-meta .prole { font-size:10.5px; color:var(--text-muted); }
 
@@ -137,11 +137,43 @@
 .admin-root .icon-btn {
     width:38px; height:38px; border-radius:50%; border:1px solid var(--border); background:var(--card);
     display:flex; align-items:center; justify-content:center; cursor:pointer; color:var(--text-muted);
+    transition:background .15s ease, color .15s ease, border-color .15s ease;
   }
 .admin-root .icon-btn svg { width:17px; height:17px; }
 .admin-root .icon-btn:disabled { opacity:.45; cursor:not-allowed; }
 .admin-root .icon-btn.sm { width:30px; height:30px; }
 .admin-root .icon-btn.sm svg { width:14px; height:14px; }
+.admin-root .icon-btn:hover:not(:disabled) { background:var(--bg); border-color:var(--text-faint); color:var(--text); }
+.admin-root .icon-btn.danger:hover:not(:disabled) { background:var(--red-tint); border-color:var(--red); color:var(--red-dark); }
+
+/* ---------- bouton "danger" (suppression) ---------- */
+.admin-root .btn-danger { background:var(--red-dark); color:#fff; }
+.admin-root .btn-danger:hover { background:#8a0119; }
+.admin-root .btn-danger:disabled { opacity:.55; cursor:not-allowed; }
+
+/* ---------- modale de confirmation (remplace window.confirm) ---------- */
+.admin-root .confirm-overlay {
+    position:fixed; inset:0; background:rgba(20,20,30,.55); backdrop-filter:blur(2px);
+    display:flex; align-items:center; justify-content:center; z-index:1200; padding:20px;
+    animation:confirm-fade .12s ease-out;
+  }
+@keyframes confirm-fade { from{ opacity:0; } to{ opacity:1; } }
+.admin-root .confirm-card {
+    background:var(--card); border-radius:var(--radius); box-shadow:0 24px 70px -20px rgba(20,20,40,.45);
+    padding:28px 26px 22px; width:100%; max-width:400px; text-align:center;
+    animation:confirm-in .16s cubic-bezier(.2,.9,.3,1.1);
+  }
+@keyframes confirm-in { from{ opacity:0; transform:translateY(10px) scale(.97); } to{ opacity:1; transform:translateY(0) scale(1); } }
+.admin-root .confirm-icon {
+    width:52px; height:52px; border-radius:50%; margin:0 auto 16px; display:flex; align-items:center; justify-content:center;
+    background:var(--blue-tint); color:var(--blue);
+  }
+.admin-root .confirm-icon svg { width:24px; height:24px; }
+.admin-root .confirm-card.danger .confirm-icon { background:var(--red-tint); color:var(--red-dark); }
+.admin-root .confirm-title { font-family:'Poppins'; font-weight:800; font-size:16.5px; margin-bottom:8px; }
+.admin-root .confirm-message { font-size:12.5px; color:var(--text-muted); line-height:1.6; margin-bottom:22px; white-space:pre-line; }
+.admin-root .confirm-actions { display:flex; gap:10px; justify-content:center; }
+.admin-root .confirm-actions .btn { flex:1; justify-content:center; padding:10px 15px; font-size:12.5px; }
 
 .admin-root .notif-dot { position:absolute; top:6px; right:7px; width:8px; height:8px; border-radius:50%; background:var(--red); border:2px solid var(--card); }
 .admin-root .notif-dropdown {
@@ -210,6 +242,7 @@
     border-bottom:1px solid var(--border); background:var(--bg);
   }
 .admin-root tbody td { padding:13px 20px; font-size:13px; border-bottom:1px solid var(--border); vertical-align:middle; }
+.admin-root th.col-actions, .admin-root td.col-actions { width:1%; white-space:nowrap; padding-left:8px; padding-right:20px; text-align:right; }
 .admin-root tbody tr:last-child td { border-bottom:none; }
 .admin-root tbody tr:hover { background:var(--bg); }
 
@@ -379,6 +412,50 @@
     border:1px solid var(--border); background:var(--bg); color:var(--text);
   }
 .admin-root .field textarea { resize:vertical; min-height:70px; }
+
+/* Champs texte "libres" (hors .field, hors .select-chip / .status-select) — mêmes
+   dimensions et rayon que les boutons pour qu'un input et un bouton juxtaposés
+   s'alignent proprement (formulaire-builder des vœux, ajout d'année, etc.). */
+.admin-root input[type="text"], .admin-root input[type="email"], .admin-root input[type="password"],
+.admin-root input[type="number"], .admin-root input[type="date"] {
+  font-family:'Inter'; font-size:12.5px; padding:7px 12px; border-radius:var(--radius-sm);
+  border:1px solid var(--border); background:var(--card); color:var(--text); line-height:1.3;
+}
+.admin-root textarea {
+  font-family:'Inter'; font-size:12.5px; padding:9px 12px; border-radius:var(--radius-sm);
+  border:1px solid var(--border); background:var(--card); color:var(--text); resize:vertical;
+}
+.admin-root input[type="text"]::placeholder, .admin-root input[type="email"]::placeholder,
+.admin-root textarea::placeholder { color:var(--text-faint); }
+.admin-root select:not(.select-chip):not(.status-select) {
+  font-family:'Inter'; font-size:12.5px; padding:7px 12px; border-radius:var(--radius-sm);
+  border:1px solid var(--border); background:var(--card); color:var(--text); cursor:pointer; line-height:1.3;
+}
+
+/* Barre d'onglets (détail d'une campagne de vœux pédagogiques : Questions / Réponses /
+   Affectation) — segmented control plutôt que des boutons "ghost" à plat. */
+.admin-root .vp-tabs {
+  display:flex; gap:4px; padding:4px; margin:0 20px 20px; background:var(--bg);
+  border-radius:var(--radius-sm); border:1px solid var(--border); width:fit-content;
+}
+.admin-root .vp-tabs button {
+  border:none; background:transparent; font-family:'Inter'; font-size:12.5px; font-weight:700;
+  color:var(--text-muted); padding:7px 16px; border-radius:8px; cursor:pointer; transition:all .15s ease;
+}
+.admin-root .vp-tabs button:hover { color:var(--text); }
+.admin-root .vp-tabs button.active { background:var(--card); color:var(--red); box-shadow:var(--shadow); }
+
+/* Liste "Formulaires" (campagnes de vœux) — lignes compactes façon menu plutôt que
+   des cartes empilées, pour ne pas dupliquer visuellement la carte de détail juste en dessous. */
+.admin-root .vp-campagne-row {
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
+  padding:10px 12px; border-radius:var(--radius-sm); cursor:pointer; border:1px solid transparent;
+  font-size:13px;
+}
+.admin-root .vp-campagne-row:hover { background:var(--bg); }
+.admin-root .vp-campagne-row.active { background:var(--red-light); border-color:var(--red-tint); }
+.admin-root .vp-campagne-row .title { font-weight:700; }
+.admin-root .vp-campagne-row .hint { font-size:11.5px; color:var(--text-faint); font-weight:500; }
 
 .admin-root .vow-chip {
     display:flex; align-items:center; justify-content:space-between; padding:12px 14px;
@@ -682,3 +759,103 @@
 }
 .admin-root .toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
 .admin-root .toast svg{ width:15px; height:15px; color:var(--green); flex-shrink:0; }
+/* ---------- Vœux pédagogiques ---------- */
+.admin-root .vp-new-question{
+  background:linear-gradient(180deg, var(--card), var(--bg) 220%);
+  border:1px solid var(--border); border-radius:var(--radius);
+  box-shadow:0 2px 6px -2px rgba(20,20,40,.06), 0 18px 40px -22px rgba(20,20,40,.20);
+  padding:18px 20px; margin-bottom:24px;
+}
+.admin-root .vp-new-question select.select-chip{ background:var(--bg); }
+.admin-root .vp-question-card{
+  border:1px solid var(--border); border-left:4px solid var(--vp-accent, var(--border));
+  border-radius:var(--radius-sm); padding:16px 18px; margin-bottom:14px;
+  background:var(--card); box-shadow:0 2px 8px -4px rgba(20,20,40,.07);
+  transition:box-shadow .15s ease, transform .15s ease;
+}
+.admin-root .vp-question-card:hover{ box-shadow:0 12px 28px -14px rgba(20,20,40,.22); transform:translateY(-2px); }
+.admin-root .vp-type-badge{
+  display:inline-flex; align-items:center; gap:6px; margin-top:6px; font-size:10.5px; font-weight:800;
+  padding:4px 11px 4px 9px; border-radius:999px; letter-spacing:.02em; text-transform:uppercase;
+}
+.admin-root .vp-type-badge::before{ content:''; width:6px; height:6px; border-radius:50%; background:currentColor; flex-shrink:0; }
+.admin-root .vp-type-blue{ background:var(--blue-tint); color:#1D4ED8; }
+.admin-root .vp-type-amber{ background:var(--amber-tint); color:#9A6600; }
+.admin-root .vp-type-green{ background:var(--green-tint); color:var(--green); }
+.admin-root .vp-type-muted{ background:var(--bg); color:var(--text-muted); }
+.admin-root .vp-options-editor{
+  margin-top:12px; padding-top:12px; border-top:1px dashed var(--border);
+}
+.admin-root .vp-option-chip{
+  display:inline-flex; align-items:center; gap:6px; background:var(--card); border:1px solid var(--border);
+  border-radius:8px; padding:5px 11px; font-size:12px; font-weight:700; box-shadow:0 1px 2px rgba(20,20,40,.04);
+}
+.admin-root .vp-option-chip button{
+  border:none; background:none; cursor:pointer; color:var(--text-muted); font-weight:700; line-height:1; padding:0;
+}
+.admin-root .vp-option-chip button:hover{ color:var(--red-dark); }
+.admin-root .vp-class-chip{
+  display:inline-flex; align-items:center; background:var(--blue-tint); color:#1D4ED8;
+  border-radius:8px; padding:5px 11px; font-size:12px; font-weight:700;
+}
+.admin-root .vp-module-row{ padding:14px 0; border-bottom:1px solid var(--border); }
+.admin-root .vp-module-row:last-child{ border-bottom:none; }
+.admin-root .vp-module-row-head{ display:flex; justify-content:space-between; align-items:center; }
+.admin-root .vp-modules-card{ border-top:3px solid var(--blue); }
+.admin-root .vp-modules-card .card-head h2{ display:flex; align-items:center; gap:8px; }
+.admin-root .vp-modules-card .card-head h2::before{
+  content:''; width:9px; height:9px; border-radius:3px; background:var(--blue); flex-shrink:0;
+}
+
+/* ---------- Vœux pédagogiques : mise en page générale (liste + détail) ---------- */
+.admin-root .vp-layout{ display:flex; align-items:flex-start; gap:20px; }
+.admin-root .vp-sidebar{ width:300px; flex-shrink:0; position:sticky; top:20px; }
+.admin-root .vp-main{ flex:1; min-width:0; }
+@media (max-width:960px){
+  .admin-root .vp-layout{ flex-direction:column; }
+  .admin-root .vp-sidebar{ width:100%; position:static; }
+}
+.admin-root .vp-new-form-toggle{ display:flex; justify-content:flex-end; padding:0 20px 16px; }
+.admin-root .vp-new-form-panel{
+  margin:0 20px 16px; padding:14px; background:var(--bg); border:1px solid var(--border);
+  border-radius:var(--radius-sm); display:flex; flex-direction:column; gap:10px;
+}
+.admin-root .vp-campagnes-list{ display:flex; flex-direction:column; gap:4px; padding:0 12px 12px; }
+.admin-root .vp-campagne-row{ align-items:center; }
+.admin-root .vp-campagne-row .title{ font-size:13px; }
+.admin-root .vp-campagne-row .hint{ margin-top:1px; }
+
+/* Formulaire "nouvelle question" : grille labellisée plutôt qu'une rangée compacte. */
+.admin-root .vp-new-question .vp-field-row{ display:grid; grid-template-columns:1fr 2fr; gap:12px; }
+.admin-root .vp-new-question .vp-field-row + .vp-field-row{ margin-top:12px; }
+.admin-root .vp-new-question label{ display:block; font-size:11px; font-weight:700; color:var(--text-muted); margin-bottom:6px; text-transform:uppercase; letter-spacing:.02em; }
+.admin-root .vp-new-question select.select-chip{ width:100%; }
+.admin-root .vp-new-question-actions{ display:flex; justify-content:flex-end; margin-top:14px; }
+.admin-root .vp-new-question-head{ display:flex; align-items:center; gap:8px; font-size:13px; font-weight:700; margin-bottom:14px; }
+.admin-root .vp-new-question-head svg{ width:16px; height:16px; color:var(--red); }
+@media (max-width:640px){
+  .admin-root .vp-new-question .vp-field-row{ grid-template-columns:1fr; }
+}
+
+/* Numéro de question : rond discret au lieu du simple "1." collé au texte. */
+.admin-root .vp-question-num{
+  display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:50%;
+  background:var(--bg); color:var(--text-muted); font-size:11px; font-weight:800; flex-shrink:0;
+}
+.admin-root .vp-question-title-row{ display:flex; align-items:center; gap:10px; }
+
+/* Classes disponibles d'un module : chips teintés bleu, distincts des "réponses possibles". */
+.admin-root .vp-module-row-head{ margin-bottom:2px; }
+
+/* ---------- Sous-équipes : détail par membre (vue filtrée) ---------- */
+.admin-root .vp-membres-list{ display:flex; flex-direction:column; gap:10px; padding-top:4px; }
+.admin-root .vp-membre-card{
+  background:var(--bg); border-radius:var(--radius-sm); padding:14px 16px;
+  transition:box-shadow .15s ease;
+}
+.admin-root .vp-membre-card:hover{ box-shadow:0 4px 14px -6px rgba(20,20,40,.12); }
+.admin-root .vp-membre-card table{ background:var(--card); border-radius:var(--radius-sm); overflow:hidden; }
+.admin-root .vp-membre-card thead th{ background:var(--card); border-top:none; }
+.admin-root .vp-membre-card tbody td{ font-size:12.5px; }
+.admin-root .vp-membre-card tbody tr:hover{ background:var(--bg); }
+.admin-root .date-warning { font-size:12px; font-weight:600; color:var(--amber, #9A6600); background:var(--amber-tint, #FFF3D6); border-radius:8px; padding:6px 10px; }

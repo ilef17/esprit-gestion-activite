@@ -66,6 +66,26 @@ export async function deleteResponsable(id) {
   await pool.query('DELETE FROM responsable WHERE id_responsable = ?', [id])
 }
 
+// Un compte "responsable" n'a de sens que tant qu'il gère au moins une équipe (sous-équipe
+// UP ou équipe hors UP). Quand il vient d'être retiré de sa dernière équipe (ou que celle-ci
+// vient d'être supprimée) et qu'il n'en gère donc plus aucune, on supprime ce compte
+// orphelin plutôt que de le laisser affiché dans la page Utilisateurs avec une équipe vide —
+// voir sousEquipes.controller.js et equipeHorsUp.controller.js (editSousEquipe/editEquipeHorsUp,
+// removeSousEquipe/removeEquipeHorsUp). Le compte collaborateur "miroir" éventuel n'est pas
+// touché : la personne redevient simplement un collaborateur ordinaire.
+export async function supprimerResponsableSiOrphelin(id) {
+  if (!id) return
+  const [rows] = await pool.query(
+    `SELECT
+      (SELECT COUNT(*) FROM sous_equipe WHERE id_responsable = ?) +
+      (SELECT COUNT(*) FROM equipe_hors_up WHERE id_responsable = ?) AS nb_equipes`,
+    [id, id]
+  )
+  if (Number(rows[0]?.nb_equipes || 0) === 0) {
+    await deleteResponsable(id)
+  }
+}
+
 // ---------- Mot de passe oublié ----------
 
 export async function updateResponsablePassword(email, hashedPassword) {
@@ -74,27 +94,31 @@ export async function updateResponsablePassword(email, hashedPassword) {
 
 // ---------- Profil du responsable connecté (page "Mon profil") ----------
 
-// Identité, sous-équipes gérées et préférences de compte, pour l'utilisateur du token.
+// Identité, équipes gérées (sous-équipes UP + équipes hors UP) et préférences de
+// compte, pour l'utilisateur du token.
 export async function getMonProfilResponsable(id) {
   const [rows] = await pool.query(
     `SELECT
       r.id_responsable, r.nom, r.email, r.identifiant_esprit,
       r.notifications_email, r.profil_visible,
-      (SELECT GROUP_CONCAT(DISTINCT se.nom SEPARATOR ', ')
-         FROM sous_equipe se
-        WHERE se.id_responsable = r.id_responsable) AS sous_equipes
+      GROUP_CONCAT(DISTINCT se.nom SEPARATOR ', ') AS sous_equipes_up,
+      GROUP_CONCAT(DISTINCT eh.nom_up SEPARATOR ', ') AS equipes_hors_up
     FROM responsable r
-    WHERE r.id_responsable = ?`,
+    LEFT JOIN sous_equipe se ON se.id_responsable = r.id_responsable
+    LEFT JOIN equipe_hors_up eh ON eh.id_responsable = r.id_responsable
+    WHERE r.id_responsable = ?
+    GROUP BY r.id_responsable, r.nom, r.email, r.identifiant_esprit, r.notifications_email, r.profil_visible`,
     [id]
   )
   const row = rows[0]
   if (!row) return null
+  const toutesEquipes = [row.sous_equipes_up, row.equipes_hors_up].filter(Boolean).join(', ')
   return {
     id: row.id_responsable,
     nom: row.nom,
     email: row.email,
     identifiant_esprit: row.identifiant_esprit,
-    sous_equipes: row.sous_equipes || null,
+    sous_equipes: toutesEquipes || null,
     notifications_email: !!row.notifications_email,
     profil_visible: !!row.profil_visible,
   }

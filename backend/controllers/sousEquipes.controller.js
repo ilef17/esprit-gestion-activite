@@ -10,9 +10,12 @@ import {
   removeMembreFromSousEquipe,
   getSousEquipesByResponsable,
   sousEquipeAppartientAuResponsable,
+  getMesSousEquipesAvecResponsable,
 } from '../models/sousEquipe.model.js'
-import { getResponsableById } from '../models/responsable.model.js'
+import { getResponsableById, supprimerResponsableSiOrphelin } from '../models/responsable.model.js'
 import { sendResponsableAssignationEmail } from '../utils/Mailer.js'
+import { deleteTachesCollaborateurEquipe } from '../models/tache.model.js'
+import { deleteScoresCollaborateurEquipe } from '../models/evaluationScore.model.js'
 
 // Liste simple (publique — utilisée par la page d'inscription)
 export async function listSousEquipes(req, res) {
@@ -75,6 +78,18 @@ export async function listMesSousEquipes(req, res) {
   }
 }
 
+// Sous-équipes du collaborateur connecté, avec responsable — utilisée par le formulaire
+// "Nouvelle activité hors-équipe" côté collaborateur.
+export async function listMesEquipesCollaborateur(req, res) {
+  try {
+    const sousEquipes = await getMesSousEquipesAvecResponsable(req.user.id)
+    res.json(sousEquipes)
+  } catch (err) {
+    console.error(err)
+    res.status(500).json({ message: 'Erreur serveur' })
+  }
+}
+
 export async function addSousEquipe(req, res) {
   try {
     const { nom } = req.body
@@ -127,6 +142,13 @@ export async function editSousEquipe(req, res) {
       }
     }
 
+    // Si un responsable vient d'être retiré (ou remplacé) de cette sous-équipe et qu'il
+    // ne gère plus aucune équipe (ni sous-équipe, ni équipe hors UP), son rôle
+    // "Responsable" n'a plus lieu d'être affiché — on supprime le compte orphelin.
+    if (req.body.id_responsable !== undefined && before?.id_responsable && Number(before.id_responsable) !== Number(req.body.id_responsable || 0)) {
+      await supprimerResponsableSiOrphelin(before.id_responsable)
+    }
+
     res.json(updated)
   } catch (err) {
     console.error(err)
@@ -136,7 +158,14 @@ export async function editSousEquipe(req, res) {
 
 export async function removeSousEquipe(req, res) {
   try {
+    const before = await getSousEquipeById(req.params.id)
     await deleteSousEquipe(req.params.id)
+    // Le responsable de cette sous-équipe (le cas échéant) peut se retrouver sans
+    // aucune équipe à gérer une fois celle-ci supprimée : on nettoie alors son compte
+    // "Responsable" orphelin plutôt que de le laisser affiché avec une équipe vide.
+    if (before?.id_responsable) {
+      await supprimerResponsableSiOrphelin(before.id_responsable)
+    }
     res.status(204).end()
   } catch (err) {
     console.error(err)
@@ -168,6 +197,10 @@ export async function removeMembre(req, res) {
       if (!ok) return res.status(403).json({ message: "Cette sous-équipe ne vous est pas assignée." })
     }
     await removeMembreFromSousEquipe(req.params.id, req.params.idCollaborateur)
+    // Le collaborateur ne fait plus partie de cette sous-équipe : ses tâches et scores
+    // propres à cette équipe n'ont plus lieu de rester affichés sur les tableaux de bord.
+    await deleteTachesCollaborateurEquipe(req.params.idCollaborateur, { idSousEquipe: req.params.id })
+    await deleteScoresCollaborateurEquipe(req.params.idCollaborateur, req.params.id, 'up')
     const membres = await getSousEquipeMembres(req.params.id)
     res.json(membres)
   } catch (err) {

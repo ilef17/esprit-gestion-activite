@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useAuth } from '../../context/AuthContext.jsx'
 import EspritLogo from '../../components/EspritLogo.jsx'
 import StatsDashboard from '../../components/dashboard/StatsDashboard.jsx'
+import { warningDateSeule } from '../../utils/dateValidation.js'
 import {
   getSousEquipesDetaillees,
   getSousEquipe,
@@ -23,9 +24,6 @@ import {
   promoteToResponsable,
   ensureCollaborateurAccount,
   getDemandes,
-  envoyerVerificationDemande,
-  validerDemande,
-  refuserDemande,
   getCriteres,
   createCritere,
   updateCritere,
@@ -33,30 +31,42 @@ import {
   getScores,
   getGrilleNotes,
   calculerScores,
+  calculerScoresPourTous,
   getRapports,
   createRapport,
   telechargerRapportFichier,
   getStatsImplication,
   getParametres,
   updateParametres,
+  ajouterAnneeSysteme,
   getSauvegardes,
   creerSauvegarde,
   verifierSauvegarde,
   telechargerSauvegardeFichier,
   deleteSauvegarde,
   createTache,
+  getMembresSousEquipe,
+  getTaches,
   getProfesseurs,
   getProfesseurDetail,
   addExpertiseAdmin,
   deleteExpertise,
   getCampagnesVoeuxPedagogiques,
+  getCampagneVoeuxPedagogiques,
   createCampagneVoeuxPedagogiques,
   updateCampagneVoeuxPedagogiques,
   publierCampagneVoeuxPedagogiques,
   cloturerCampagneVoeuxPedagogiques,
   deleteCampagneVoeuxPedagogiques,
+  ajouterQuestionVoeuxPedagogiques,
+  modifierQuestionVoeuxPedagogiques,
+  supprimerQuestionVoeuxPedagogiques,
+ ajouterModuleVoeuxPedagogiques,
+  modifierModuleVoeuxPedagogiques,
+  supprimerModuleVoeuxPedagogiques,
   getReponsesCampagneVoeuxPedagogiques,
-  ajouterAffectationVoeuxPedagogiques,
+  getVueAffectationVoeuxPedagogiques,
+  affecterClasseVoeuxPedagogiques,
   supprimerAffectationVoeuxPedagogiques,
   getMonProfil,
   updateMesPreferences,
@@ -64,6 +74,7 @@ import {
   changerMonMotDePasse,
 } from '../../services/api.js'
 import { getPasswordChecklist, isPasswordStrong, PASSWORD_RULES_MESSAGE } from '../../utils/passwordrules.js'
+import { useConfirm } from '../../hooks/useConfirm.jsx'
 import './admin.css'
 
 /* ---------- small inline icon set (copied from the design template) ---------- */
@@ -110,14 +121,14 @@ const NAV_SECTIONS = [
     { page: 'sous-equipes', label: 'Sous-équipes', icon: 'teams' },
   ]},
   { label: 'Activités', items: [
-    { page: 'demandes', label: 'Demandes hors-équipe', icon: 'requests', badgeKey: 'demandes' },
+    { page: 'demandes', label: 'Activité hors-équipe', icon: 'requests', badgeKey: 'demandes' },
     { page: 'evaluation', label: 'Évaluation', icon: 'eval' },
     { page: 'rapports', label: 'Rapports', icon: 'reports' },
     { page: 'activite-ecole', label: 'Activité école', icon: 'academic' },
     { page: 'voeux-pedagogiques', label: 'Vœux pédagogiques', icon: 'poll' },
   ]},
   { label: 'Système', items: [
-    { page: 'parametres', label: 'Mon profil', icon: 'profile' },
+    { page: 'parametres', label: 'Paramètres', icon: 'profile' },
   ]},
 ]
 
@@ -125,13 +136,13 @@ const PAGE_TITLES = {
   dashboard:    { crumb: 'Intranet · Pilotage', title: 'Tableau de bord global' },
   utilisateurs: { crumb: 'Intranet · Pilotage', title: 'Collaborateurs' },
   'sous-equipes': { crumb: 'Intranet · Pilotage', title: 'Sous-équipes' },
-  demandes:     { crumb: 'Intranet · Activités', title: 'Demandes hors-équipe' },
+  demandes:     { crumb: 'Intranet · Activités', title: 'Activité hors-équipe' },
   evaluation:   { crumb: 'Intranet · Activités', title: 'Évaluation' },
   rapports:     { crumb: 'Intranet · Activités', title: 'Rapports' },
   'activite-ecole': { crumb: 'Intranet · Activités', title: 'Activité école' },
   'voeux-pedagogiques': { crumb: 'Intranet · Activités', title: 'Vœux pédagogiques' },
   sauvegardes:  { crumb: 'Intranet · Système', title: 'Sauvegardes' },
-  parametres:   { crumb: 'Intranet · Système', title: 'Mon profil' },
+  parametres:   { crumb: 'Intranet · Système', title: 'Paramètres' },
 }
 
 function initials(name) {
@@ -142,12 +153,29 @@ function initials(name) {
 
 function statutBadge(statut) {
   const map = {
-    attente: { label: 'En attente', cls: 'amber' },
-    envoye: { label: 'Vérification envoyée', cls: 'blue' },
-    validee: { label: 'Validée', cls: 'green' },
-    refusee: { label: 'Refusée', cls: 'red' },
+    a_faire: { label: 'À faire', cls: 'gray' },
+    en_cours: { label: 'En cours', cls: 'blue' },
+    faite: { label: 'Faite', cls: 'green' },
   }
   return map[statut] || { label: statut, cls: 'gray' }
+}
+
+const TACHE_STATUT_LABELS = {
+  a_faire: 'Non réalisée',
+  en_cours: 'En cours',
+  validee: 'Validée',
+  probleme_coordination: 'Problème de coordination',
+  a_refaire: 'À refaire',
+}
+function tacheStatutBadge(statut) {
+  const map = {
+    a_faire: { label: 'Non réalisée', cls: 'nonrealisee' },
+    en_cours: { label: 'En cours', cls: 'encours' },
+    validee: { label: 'Validée', cls: 'validee' },
+    probleme_coordination: { label: 'Problème de coordination', cls: 'refaire' },
+    a_refaire: { label: 'À refaire', cls: 'refaire' },
+  }
+  return map[statut] || { label: TACHE_STATUT_LABELS[statut] || statut, cls: 'attente' }
 }
 
 function relativeDays(dateStr) {
@@ -224,12 +252,49 @@ export default function AdminDashboard() {
   const [activePage, setActivePage] = useState('dashboard')
   const [toastMsg, setToastMsg] = useState(null)
   const [params, setParams] = useState(null)
+  // Une seule instance de la modale de confirmation pour tout le tableau de bord :
+  // partagée (via prop `confirm`) par toutes les pages qui remplaçaient auparavant
+  // window.confirm(), pour ne monter qu'un seul overlay à la fois.
+  const { confirm, ConfirmDialog } = useConfirm()
 
-  // Filtres Année / Semestre du tableau de bord — purement côté client (ne modifient
-  // plus aucun réglage serveur, contrairement à l'ancienne "période active").
+  // Filtres Année / Semestre du tableau de bord — changent uniquement la période
+  // *consultée* (StatsDashboard, tâches, vœux, évaluations...). La période *active*
+  // du système (celle par défaut pour les collaborateurs/responsables et les nouvelles
+  // tâches sans période explicite) reste `params.annee_universitaire`/`semestre_actif`
+  // jusqu'à ce que l'admin clique explicitement sur "Définir comme période active".
   const defautPeriode = useMemo(periodeParDefaut, [])
   const [filtreAnnee, setFiltreAnnee] = useState(defautPeriode.annee)
   const [filtreSemestre, setFiltreSemestre] = useState(defautPeriode.semestre)
+
+  // Liste des années universitaires proposées dans le sélecteur : quelques années
+  // autour de l'année courante, plus l'année active du système si elle est en dehors
+  // de cette fenêtre (pour ne jamais la faire disparaître du menu).
+  const anneesOptions = useMemo(() => {
+    const debut = Number(defautPeriode.annee.split('/')[0])
+    const annees = new Set()
+    for (let i = 2; i >= -2; i--) annees.add(`${debut + i}/${debut + i + 1}`)
+    ;(params?.annees_supplementaires || []).forEach((a) => annees.add(a))
+    return Array.from(annees).sort().reverse()
+  }, [defautPeriode.annee, params])
+
+  // La période *active* du système est celle définie via "Définir comme période
+  // active" (params.annee_universitaire / semestre_actif). Tant que la période
+  // *consultée* (filtreAnnee/filtreSemestre) ne correspond pas à la période
+  // active, le tableau de bord passe en lecture seule (aucune création/édition
+  // possible) — pour ne jamais modifier des données d'une période archivée.
+  const periodeEstActive = !params || (filtreAnnee === params.annee_universitaire && filtreSemestre === params.semestre_actif)
+
+  // Petite confirmation visuelle ("✓ ... affiché") après un changement de sélection,
+  // pour rendre le changement perceptible — s'efface après quelques secondes.
+  const [periodeAppliedMsg, setPeriodeAppliedMsg] = useState(null)
+  const periodeFirstRender = useRef(true)
+  useEffect(() => {
+    if (periodeFirstRender.current) { periodeFirstRender.current = false; return }
+    const label = filtreSemestre === 'S1' ? 'Semestre 1' : 'Semestre 2'
+    setPeriodeAppliedMsg(`${filtreAnnee} · ${label} affiché`)
+    const t = setTimeout(() => setPeriodeAppliedMsg(null), 2500)
+    return () => clearTimeout(t)
+  }, [filtreAnnee, filtreSemestre])
 
   // Notifications (cloche) : demandes hors-équipe en attente de vérification.
   const [notifOpen, setNotifOpen] = useState(false)
@@ -295,9 +360,46 @@ export default function AdminDashboard() {
       .catch((err) => console.error('Erreur chargement demandes:', err))
   ), [filtreAnnee, filtreSemestre])
 
+  // Au tout premier chargement (connexion / rechargement de page), on cale le
+  // filtre *consulté* sur la période *active* persistée en base plutôt que sur la
+  // date du jour — pour que la période choisie via "Définir comme période active"
+  // reste affichée par défaut après une déconnexion/reconnexion.
+  const periodeSyncedRef = useRef(false)
   const refreshParams = useCallback(() => (
-    getParametres().then(setParams).catch((err) => console.error('Erreur chargement paramètres:', err))
+    getParametres()
+      .then((data) => {
+        setParams(data)
+        if (!periodeSyncedRef.current && data?.annee_universitaire && data?.semestre_actif) {
+          periodeSyncedRef.current = true
+          setFiltreAnnee(data.annee_universitaire)
+          setFiltreSemestre(data.semestre_actif)
+        }
+      })
+      .catch((err) => console.error('Erreur chargement paramètres:', err))
   ), [])
+
+  // Rend la période actuellement consultée (filtreAnnee/filtreSemestre) active pour
+  // tout le système : c'est elle qui devient la période par défaut des collaborateurs/
+  // responsables à leur prochaine connexion, et des nouvelles tâches créées sans
+  // période explicite. Action explicite et confirmée vu sa portée globale.
+  const definirPeriodeActive = useCallback(async () => {
+    const label = filtreSemestre === 'S1' ? 'Semestre 1' : 'Semestre 2'
+    const ok = await confirm({
+      title: 'Changer la période active du système ?',
+      message: `Faire de ${filtreAnnee} · ${label} la période active du système ? Cela changera la période par défaut pour tous les collaborateurs et responsables, ainsi que pour les nouvelles tâches créées sans période explicite.`,
+      confirmLabel: 'Définir comme active',
+    })
+    if (!ok) return
+    updateParametres({ annee_universitaire: filtreAnnee, semestre_actif: filtreSemestre })
+      .then((updated) => {
+        setParams(updated)
+        showToast(`${filtreAnnee} · ${label} est maintenant la période active du système.`)
+      })
+      .catch((err) => {
+        console.error('Erreur définition période active:', err)
+        showToast("Impossible d'enregistrer la période active")
+      })
+  }, [filtreAnnee, filtreSemestre, showToast, confirm])
 
   useEffect(() => {
     refreshSousEquipes()
@@ -308,9 +410,22 @@ export default function AdminDashboard() {
     refreshParams()
   }, [refreshSousEquipes, refreshEquipesHorsUp, refreshUsers, refreshAllUsers, refreshDemandes, refreshParams])
 
+  // Rafraîchissement périodique — pour voir apparaître les changements faits par les
+  // collaborateurs/responsables (nouvelle activité hors-équipe, tâche mise à jour,
+  // membre ajouté/retiré d'une équipe…) sans avoir à recharger la page.
+  useEffect(() => {
+    const id = setInterval(() => {
+      refreshSousEquipes()
+      refreshEquipesHorsUp()
+      refreshUsers()
+      refreshDemandes()
+    }, 25000)
+    return () => clearInterval(id)
+  }, [refreshSousEquipes, refreshEquipesHorsUp, refreshUsers, refreshDemandes])
+
   const nav = PAGE_TITLES[activePage]
   const adminName = user?.nom || 'Admin'
-  const demandesEnAttente = demandes.filter((d) => d.statut !== 'validee' && d.statut !== 'refusee')
+  const demandesEnAttente = demandes.filter((d) => d.statut !== 'faite')
   const goTo = (page) => setActivePage(page)
 
   return (
@@ -355,6 +470,25 @@ export default function AdminDashboard() {
           <div className="topbar">
             <div><div className="crumb">{nav.crumb}</div><h1>{nav.title}</h1></div>
             <div className="top-controls">
+              {periodeAppliedMsg && (
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' }}>
+                  <span style={{ color: '#16a34a', fontWeight: 700 }}>✓</span>{periodeAppliedMsg}
+                </div>
+              )}
+              {params && (filtreAnnee !== params.annee_universitaire || filtreSemestre !== params.semestre_actif) && (
+                <button
+                  type="button"
+                  onClick={definirPeriodeActive}
+                  title="Faire de la période affichée la période active du système"
+                  style={{
+                    border: '1px solid var(--border, #e2e2e2)', background: 'var(--surface, #fff)',
+                    color: 'inherit', borderRadius: 8, padding: '7px 14px', fontSize: 13,
+                    fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
+                  }}
+                >
+                  Définir comme période active
+                </button>
+              )}
               <select
                 className="select-chip"
                 value={filtreAnnee}
@@ -362,8 +496,9 @@ export default function AdminDashboard() {
                 title="Filtrer le tableau de bord par année universitaire"
                 style={{ border: 'none', background: 'transparent', cursor: 'pointer', font: 'inherit', color: 'inherit' }}
               >
-                <option value="2025/2026">2025 / 2026</option>
-                <option value="2024/2025">2024 / 2025</option>
+                {anneesOptions.map((a) => (
+                  <option key={a} value={a}>{a.replace('/', ' / ')}</option>
+                ))}
               </select>
               <select
                 className="select-chip"
@@ -384,7 +519,7 @@ export default function AdminDashboard() {
                   <>
                     <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setNotifOpen(false)} />
                     <div className="notif-dropdown" style={{ position: 'absolute', right: 0, top: '120%', width: 320, zIndex: 41 }}>
-                      <div className="notif-head">Demandes hors-équipe en attente</div>
+                      <div className="notif-head">Activités hors-équipe en cours</div>
                       {demandesEnAttente.length === 0 && <div className="notif-empty">Aucune notification</div>}
                       {demandesEnAttente.slice(0, 6).map((d) => (
                         <div
@@ -395,12 +530,12 @@ export default function AdminDashboard() {
                           <div className="avatar sm">{initials(d.collaborateur_nom)}</div>
                           <div className="body">
                             <div className="title">{d.collaborateur_nom}</div>
-                            <div className="desc">{d.description}</div>
+                            <div className="desc">{d.titre}</div>
                           </div>
                         </div>
                       ))}
                       {demandesEnAttente.length > 0 && (
-                        <div className="notif-footer" onClick={() => { setNotifOpen(false); goTo('demandes') }}>Voir toutes les demandes</div>
+                        <div className="notif-footer" onClick={() => { setNotifOpen(false); goTo('demandes') }}>Voir toutes les activités</div>
                       )}
                     </div>
                   </>
@@ -411,6 +546,15 @@ export default function AdminDashboard() {
           </div>
 
           <div className="content">
+           {!periodeEstActive && (
+             <div style={{
+               display: 'flex', alignItems: 'center', gap: 8, background: 'var(--amber-tint, #FEF3C7)',
+               color: '#9A6600', border: '1px solid #F5D68A', borderRadius: 10, padding: '10px 16px', marginBottom: 16, fontSize: 13, fontWeight: 600,
+             }}>
+               🔒 Période archivée ({filtreAnnee} · {filtreSemestre === 'S1' ? 'Semestre 1' : 'Semestre 2'}) — lecture seule, aucune création ni modification possible. La période active est {params?.annee_universitaire} · {params?.semestre_actif === 'S1' ? 'Semestre 1' : 'Semestre 2'}.
+             </div>
+           )}
+           <fieldset disabled={!periodeEstActive} style={{ border: 0, margin: 0, padding: 0 }}>
            {activePage === 'dashboard' && (
               <>
                 <DashboardHome
@@ -449,6 +593,7 @@ export default function AdminDashboard() {
                 teams={sousEquipes}
                 horsUpTeams={equipesHorsUp}
                 showToast={showToast}
+                confirm={confirm}
                 onChanged={() => { refreshUsers(); refreshAllUsers(); refreshSousEquipes(); refreshEquipesHorsUp() }}
               />
             )}
@@ -460,13 +605,14 @@ export default function AdminDashboard() {
                 loadingHorsUp={loadingHorsUp}
                 users={allUsers}
                 showToast={showToast}
+                confirm={confirm}
                 onChanged={refreshSousEquipes}
                 onHorsUpChanged={refreshEquipesHorsUp}
                 onUsersChanged={() => { refreshUsers(); refreshAllUsers() }}
               />
             )}
             {activePage === 'demandes' && (
-              <Demandes demandes={demandes} showToast={showToast} onChanged={refreshDemandes} />
+              <Demandes demandes={demandes} />
             )}
             {activePage === 'evaluation' && (
               <Evaluation teams={sousEquipes} horsUpTeams={equipesHorsUp} showToast={showToast} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} />
@@ -478,10 +624,11 @@ export default function AdminDashboard() {
               <ActiviteEcole showToast={showToast} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} />
             )}
             {activePage === 'voeux-pedagogiques' && (
-              <VoeuxPedagogiques showToast={showToast} teams={sousEquipes} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} />
+              <VoeuxPedagogiques showToast={showToast} confirm={confirm} />
             )}
+            </fieldset>
             {activePage === 'sauvegardes' && (
-              <Sauvegardes showToast={showToast} />
+              <Sauvegardes showToast={showToast} confirm={confirm} />
             )}
             {activePage === 'parametres' && (
               <MonProfilAdmin
@@ -492,11 +639,14 @@ export default function AdminDashboard() {
                 onToggleDark={toggleDarkMode}
                 params={params}
                 onChangedParams={refreshParams}
+                onAnneeAjoutee={(annee) => setFiltreAnnee(annee)}
               />
             )}
           </div>
         </main>
       </div>
+
+      {ConfirmDialog}
 
       <div className={`toast${toastMsg ? ' show' : ''}`}>
         <Icon.check />
@@ -573,6 +723,26 @@ function PieChartRepartition({ data }) {
 /* ================= DASHBOARD ================= */
 function DashboardHome({ teams, horsUpTeams, loadingTeams, users, demandes, filtreAnnee, filtreSemestre, onAnneeChange, onSemestreChange, onNavigate }) {
   const collaborateursActifs = users.filter((u) => u.role === 'collaborateur' && u.actif).length
+
+  // Filtre "Sous-équipes" du tableau de bord : quand une sous-équipe est
+  // choisie, on affiche ses membres avec la liste de leurs tâches
+  // (statut, priorité, date d'échéance) à la place du tableau récapitulatif.
+  const [sousEquipeFiltre, setSousEquipeFiltre] = useState('')
+  const [membresFiltre, setMembresFiltre] = useState([])
+  const [tachesFiltre, setTachesFiltre] = useState([])
+  const [loadingFiltre, setLoadingFiltre] = useState(false)
+
+  useEffect(() => {
+    if (!sousEquipeFiltre) { setMembresFiltre([]); setTachesFiltre([]); return }
+    setLoadingFiltre(true)
+    Promise.all([
+      getMembresSousEquipe(sousEquipeFiltre),
+      getTaches({ sous_equipe: sousEquipeFiltre }),
+    ])
+      .then(([membres, taches]) => { setMembresFiltre(membres || []); setTachesFiltre(taches || []) })
+      .catch((err) => console.error(err))
+      .finally(() => setLoadingFiltre(false))
+  }, [sousEquipeFiltre])
   const tauxGlobal = teams.length
     ? Math.round(teams.reduce((s, t) => s + (t.avancement || 0), 0) / teams.length)
     : 0
@@ -651,7 +821,7 @@ function DashboardHome({ teams, horsUpTeams, loadingTeams, users, demandes, filt
         </div>
         <div className="kpi" style={{ cursor: 'pointer' }} role="button" tabIndex={0} onClick={() => onNavigate?.('demandes')} onKeyDown={(e) => e.key === 'Enter' && onNavigate?.('demandes')}>
           <div className="top"><div className="icon-wrap amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg></div></div>
-          <div className="num">{demandes.length}</div><div className="label">Demandes hors-équipe</div>
+          <div className="num">{demandes.length}</div><div className="label">Activité hors-équipe</div>
         </div>
         <div className="kpi" style={{ cursor: 'pointer' }} role="button" tabIndex={0} onClick={() => onNavigate?.('rapports')} onKeyDown={(e) => e.key === 'Enter' && onNavigate?.('rapports')}>
           <div className="top"><div className="icon-wrap green"><Icon.check /></div></div>
@@ -664,25 +834,78 @@ function DashboardHome({ teams, horsUpTeams, loadingTeams, users, demandes, filt
           <div className="card">
             <div className="card-head">
               <div><h2>Sous-équipes</h2><div className="hint">Avancement des tâches par équipe</div></div>
+              {teams.length > 0 && (
+                <select
+                  className="select-chip"
+                  value={sousEquipeFiltre}
+                  onChange={(e) => setSousEquipeFiltre(e.target.value)}
+                  style={{ border: '1px solid var(--border)', background: 'var(--card)' }}
+                >
+                  <option value="">Toutes les sous-équipes</option>
+                  {teams.map((t) => <option key={`filtre-${t.id}`} value={t.id}>{t.nom}</option>)}
+                </select>
+              )}
             </div>
-            <table>
-              <thead><tr><th>Équipe</th><th>Type</th><th>Responsable</th><th>Membres</th><th>Avancement</th><th>Statut</th></tr></thead>
-              <tbody>
-                {equipesPourClassement.map((t) => (
-                  <tr key={`${t.type}-${t.id}`}>
-                    <td><b>{t.nom}</b></td>
-                    <td><span className={`badge ${t.type === 'up' ? 'validee' : 'refaire'}`}>{t.type === 'up' ? 'UP' : 'Hors UP'}</span></td>
-                    <td><div className="name-cell"><div className="avatar sm">{initials(t.responsable)}</div><span className="n">{t.responsable}</span></div></td>
-                    <td>{t.membres_count} membre{t.membres_count > 1 ? 's' : ''}</td>
-                    <td><div className="progress-row"><div className="progress-track"><div className="progress-fill" style={{ width: `${t.avancement}%` }} /></div><span>{t.avancement}%</span></div></td>
-                    <td><span className={`badge ${t.statut === 'Active' ? 'validee' : 'refaire'}`}>{t.statut}</span></td>
-                  </tr>
-                ))}
-                {!loadingTeams && equipesPourClassement.length === 0 && (
-                  <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-faint)' }}>Aucune équipe pour l'instant</td></tr>
+            {!sousEquipeFiltre && (
+              <table>
+                <thead><tr><th>Équipe</th><th>Type</th><th>Responsable</th><th>Membres</th><th>Avancement</th><th>Statut</th></tr></thead>
+                <tbody>
+                  {equipesPourClassement.map((t) => (
+                    <tr key={`${t.type}-${t.id}`}>
+                      <td><b>{t.nom}</b></td>
+                      <td><span className={`badge ${t.type === 'up' ? 'validee' : 'refaire'}`}>{t.type === 'up' ? 'UP' : 'Hors UP'}</span></td>
+                      <td><div className="name-cell"><div className="avatar sm">{initials(t.responsable)}</div><span className="n">{t.responsable}</span></div></td>
+                      <td>{t.membres_count} membre{t.membres_count > 1 ? 's' : ''}</td>
+                      <td><div className="progress-row"><div className="progress-track"><div className="progress-fill" style={{ width: `${t.avancement}%` }} /></div><span>{t.avancement}%</span></div></td>
+                      <td><span className={`badge ${t.statut === 'Active' ? 'validee' : 'refaire'}`}>{t.statut}</span></td>
+                    </tr>
+                  ))}
+                  {!loadingTeams && equipesPourClassement.length === 0 && (
+                    <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--text-faint)' }}>Aucune équipe pour l'instant</td></tr>
+                  )}
+                </tbody>
+              </table>
+            )}
+            {sousEquipeFiltre && loadingFiltre && (
+              <div className="hint" style={{ padding: '16px 0' }}>Chargement…</div>
+            )}
+           {sousEquipeFiltre && !loadingFiltre && (
+              <div className="vp-membres-list">
+                {membresFiltre.length === 0 && (
+                  <div className="hint" style={{ padding: '16px 0' }}>Aucun membre dans cette sous-équipe</div>
                 )}
-              </tbody>
-            </table>
+                {membresFiltre.map((m) => {
+                  const tachesMembre = tachesFiltre.filter((t) => t.id_collaborateur === m.id_collaborateur)
+                  return (
+                    <div key={m.id_collaborateur} className="vp-membre-card">
+                      <div className="name-cell" style={{ marginBottom: tachesMembre.length > 0 ? 10 : 0 }}>
+                        <div className="avatar sm">{initials(m.nom)}</div>
+                        <span className="n"><b>{m.nom}</b></span>
+                        <span className="hint" style={{ marginLeft: 'auto' }}>{tachesMembre.length} tâche{tachesMembre.length > 1 ? 's' : ''}</span>
+                      </div>
+                      {tachesMembre.length > 0 && (
+                        <table>
+                          <thead><tr><th>Tâche</th><th>Statut</th><th>Priorité</th><th>Échéance</th></tr></thead>
+                          <tbody>
+                            {tachesMembre.map((t) => (
+                              <tr key={t.id_tache}>
+                                <td>{t.titre}</td>
+                                <td><span className={`badge ${tacheStatutBadge(t.statut).cls}`}>{tacheStatutBadge(t.statut).label}</span></td>
+                                <td><span className={`badge ${t.priorite || 'moyenne'}`}>{PRIORITE_OPTIONS.find((p) => p.value === t.priorite)?.label || t.priorite}</span></td>
+                                <td>{t.date_echeance ? new Date(t.date_echeance).toLocaleDateString('fr-FR') : '—'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                      {tachesMembre.length === 0 && (
+                        <div className="hint">Aucune tâche assignée</div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
 
           <div className="card" style={{ marginTop: 16 }}>
@@ -760,8 +983,8 @@ function DashboardHome({ teams, horsUpTeams, loadingTeams, users, demandes, filt
         <div>
           <div className="card">
             <div className="card-head">
-              <div><h2>Demandes hors-équipe</h2><div className="hint">En attente de vérification — cliquez pour ouvrir</div></div>
-              <button className="icon-btn sm" title="Voir toutes les demandes" onClick={() => onNavigate?.('demandes')}><Icon.requests /></button>
+              <div><h2>Activité hors-équipe</h2><div className="hint">Cliquez pour ouvrir</div></div>
+              <button className="icon-btn sm" title="Voir toute l'activité hors-équipe" onClick={() => onNavigate?.('demandes')}><Icon.requests /></button>
             </div>
             <div className="list">
               {demandesRecentes.map((r) => (
@@ -769,7 +992,7 @@ function DashboardHome({ teams, horsUpTeams, loadingTeams, users, demandes, filt
                   <div className="avatar sm">{initials(r.collaborateur_nom)}</div>
                   <div className="body">
                     <div className="title">{r.collaborateur_nom}</div>
-                    <div className="desc">{r.description}</div>
+                    <div className="desc">{r.titre}</div>
                     <div className="meta"><span>{new Date(r.date_reception).toLocaleDateString('fr-FR')}</span></div>
                   </div>
                 </div>
@@ -806,7 +1029,7 @@ function DashboardHome({ teams, horsUpTeams, loadingTeams, users, demandes, filt
 }
 
 /* ================= UTILISATEURS ================= */
-function Utilisateurs({ users, teams, horsUpTeams, showToast, onChanged }) {
+function Utilisateurs({ users, teams, horsUpTeams, showToast, confirm, onChanged }) {
   const [query, setQuery] = useState('')
   const [roleFilter, setRoleFilter] = useState('Tous les rôles')
   const [teamFilter, setTeamFilter] = useState('Toutes les équipes')
@@ -889,7 +1112,13 @@ function Utilisateurs({ users, teams, horsUpTeams, showToast, onChanged }) {
   const [removingTeam, setRemovingTeam] = useState(null) // `${role}-${id}-${type}-${teamId}`
   const retirerDeEquipe = async (u, team) => {
     const teamKey = `${u.role}-${u.id}-${team.type}-${team.id}`
-    if (!window.confirm(`Retirer ${u.nom} de "${team.nom}" ?`)) return
+    const ok = await confirm({
+      title: 'Retirer ce membre de l\'équipe ?',
+      message: `Retirer ${u.nom} de « ${team.nom} » ?`,
+      confirmLabel: 'Retirer',
+      danger: true,
+    })
+    if (!ok) return
     setRemovingTeam(teamKey)
     try {
       if (u.role === 'collaborateur') {
@@ -914,7 +1143,13 @@ function Utilisateurs({ users, teams, horsUpTeams, showToast, onChanged }) {
   const supprimerCompte = async (entries) => {
     const nom = entries[0].nom
     const label = entries.length > 1 ? 'les comptes (responsable et collaborateur)' : `le compte ${entries[0].roleLabel.toLowerCase()}`
-    if (!window.confirm(`Supprimer définitivement ${label} de ${nom} ? Cette action est irréversible (ex : l'utilisateur a quitté ESPRIT).`)) return
+    const ok = await confirm({
+      title: 'Supprimer ce compte ?',
+      message: `Supprimer définitivement ${label} de ${nom} ? Cette action est irréversible (ex : l'utilisateur a quitté ESPRIT).`,
+      confirmLabel: 'Supprimer définitivement',
+      danger: true,
+    })
+    if (!ok) return
     const key = `${entries[0].role}-${entries[0].id}`
     setDeletingId(key)
     try {
@@ -974,6 +1209,27 @@ function Utilisateurs({ users, teams, horsUpTeams, showToast, onChanged }) {
   }
 
   const closeTacheModal = () => setTacheModalGroup(null)
+
+  // Modale "Liste des tâches" d'un collaborateur : titre, équipe assignée,
+  // statut, priorité et date d'échéance de chacune de ses tâches.
+  const [tachesListeUser, setTachesListeUser] = useState(null) // { nom, id }
+  const [tachesListe, setTachesListe] = useState([])
+  const [loadingTachesListe, setLoadingTachesListe] = useState(false)
+
+  const openTachesListe = (g) => {
+    const collabUser = g.entries.find((u) => u.role === 'collaborateur')
+    if (!collabUser) {
+      showToast('Seuls les comptes collaborateur ont des tâches')
+      return
+    }
+    setTachesListeUser({ nom: g.nom, id: collabUser.id })
+    setLoadingTachesListe(true)
+    getTaches({ collaborateur: collabUser.id })
+      .then((data) => setTachesListe(data || []))
+      .catch((err) => { console.error(err); showToast('Erreur lors du chargement des tâches') })
+      .finally(() => setLoadingTachesListe(false))
+  }
+  const closeTachesListe = () => { setTachesListeUser(null); setTachesListe([]) }
 
   const submitTacheModal = async () => {
     if (!tacheTitre.trim()) { showToast('Le titre de la tâche est requis'); return }
@@ -1130,6 +1386,16 @@ function Utilisateurs({ users, teams, horsUpTeams, showToast, onChanged }) {
                         >
                           <Icon.task />
                         </button>
+                        {g.entries.some((u) => u.role === 'collaborateur') && (
+                          <button
+                            type="button"
+                            className="icon-btn sm"
+                            title={`Voir les tâches de ${g.nom}`}
+                            onClick={() => openTachesListe(g)}
+                          >
+                            <Icon.layers />
+                          </button>
+                        )}
                         <button
                           className="icon-btn sm"
                           disabled={togglingId === groupKey}
@@ -1199,6 +1465,9 @@ function Utilisateurs({ users, teams, horsUpTeams, showToast, onChanged }) {
                   </select>
                 </div>
                 <div className="field"><label>Date d'échéance</label><input type="date" value={tacheEcheance} onChange={(e) => setTacheEcheance(e.target.value)} /></div>
+                {warningDateSeule(tacheEcheance) && (
+                  <div className="field full"><div className="date-warning">⚠ {warningDateSeule(tacheEcheance)}</div></div>
+                )}
                 <div className="field full" style={{ display: 'flex', justifyContent: 'flex-end' }}>
                   <button className="btn btn-primary" disabled={savingTache} onClick={submitTacheModal}>{savingTache ? 'Affectation…' : 'Affecter la tâche'}</button>
                 </div>
@@ -1207,107 +1476,49 @@ function Utilisateurs({ users, teams, horsUpTeams, showToast, onChanged }) {
           </div>
         </div>
       )}
+      {tachesListeUser && (
+        <div className="modal-overlay" onClick={closeTachesListe}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="card" style={{ marginBottom: 0 }}>
+              <div className="card-head">
+                <div><h2>Tâches de {tachesListeUser.nom}</h2><div className="hint">Équipe assignée, statut, priorité et échéance</div></div>
+                <button className="btn btn-ghost btn-sm" onClick={closeTachesListe}>Fermer</button>
+              </div>
+              {loadingTachesListe && <div className="hint" style={{ padding: '16px 20px' }}>Chargement…</div>}
+              {!loadingTachesListe && tachesListe.length === 0 && (
+                <div className="hint" style={{ padding: '16px 20px' }}>Aucune tâche assignée à ce collaborateur</div>
+              )}
+              {!loadingTachesListe && tachesListe.length > 0 && (
+                <table>
+                  <thead><tr><th>Tâche</th><th>Équipe</th><th>Statut</th><th>Priorité</th><th>Échéance</th></tr></thead>
+                  <tbody>
+                    {tachesListe.map((t) => (
+                      <tr key={t.id_tache}>
+                        <td>{t.titre}</td>
+                        <td>{t.sous_equipe_nom || '—'}</td>
+                        <td><span className={`badge ${tacheStatutBadge(t.statut).cls}`}>{tacheStatutBadge(t.statut).label}</span></td>
+                        <td><span className={`badge ${t.priorite || 'moyenne'}`}>{PRIORITE_OPTIONS.find((p) => p.value === t.priorite)?.label || t.priorite}</span></td>
+                        <td>{t.date_echeance ? new Date(t.date_echeance).toLocaleDateString('fr-FR') : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }
-/* ================= DEMANDES HORS-ÉQUIPE ================= */
-function Demandes({ demandes, showToast, onChanged }) {
-  const [selected, setSelected] = useState(null) // demande en cours d'édition dans la modale
-  const [destinataire, setDestinataire] = useState('')
-  const [sending, setSending] = useState(false)
-  const [acting, setActing] = useState(false)
-  // id_demande -> 'validee' | 'refusee' : pour l'animation de transition de couleur avant
-  // que la demande ne quitte réellement la liste "En attente" (au prochain onChanged()).
-  const [justDecided, setJustDecided] = useState({})
-  // Étapes 2,3,4 ("Décision de l'admin", "Email envoyé...", "Dossier mis à jour") du schéma
-  // "Processus de validation" : passées en vert l'une après l'autre à chaque décision admin,
-  // pour visualiser la cascade décision -> email -> dossier, puis remises à zéro.
-  const [pipelineExtraDone, setPipelineExtraDone] = useState({})
+/* ================= ACTIVITÉ HORS-ÉQUIPE (visualisation uniquement) ================= */
+function Demandes({ demandes }) {
+  // Page passée en simple visualisation : plus d'acceptation/refus côté admin.
+  // Quand un collaborateur ajoute une activité hors-équipe, elle apparaît ici
+  // avec son statut, à titre informatif uniquement.
+  const [selected, setSelected] = useState(null) // activité affichée dans la modale de détail (lecture seule)
 
-  const runPipelineAnimation = () => {
-    setPipelineExtraDone({ 2: true })
-    setTimeout(() => setPipelineExtraDone((p) => ({ ...p, 3: true })), 900)
-    setTimeout(() => setPipelineExtraDone((p) => ({ ...p, 4: true })), 1800)
-    setTimeout(() => setPipelineExtraDone({}), 3600)
-  }
-
-  const ouvrirModale = (d) => {
-    setSelected(d)
-    setDestinataire(d.destinataire_verification || d.contact_responsable || '')
-  }
-  const fermerModale = () => {
-    if (sending || acting) return
-    setSelected(null)
-  }
-
-  const envoyer = async () => {
-    const email = destinataire.trim()
-    if (!email) { showToast('Merci de renseigner un destinataire de vérification'); return }
-    setSending(true)
-    try {
-      await envoyerVerificationDemande(selected.id_demande, email)
-      showToast(`Mail de vérification envoyé à ${email}`)
-      onChanged()
-      setSelected(null)
-    } catch (err) {
-      console.error(err)
-      showToast("Erreur lors de l'envoi du mail de vérification")
-    } finally {
-      setSending(false)
-    }
-  }
-
-  const valider = async () => {
-    const id = selected.id_demande
-    setActing(true)
-    try {
-      await validerDemande(id)
-      showToast('Demande validée')
-      setSelected(null)
-      runPipelineAnimation()
-      setJustDecided((prev) => ({ ...prev, [id]: 'validee' }))
-      setTimeout(() => {
-        onChanged()
-        setJustDecided((prev) => { const next = { ...prev }; delete next[id]; return next })
-      }, 1400)
-    } catch (err) {
-      console.error(err)
-      showToast('Erreur lors de la validation')
-    } finally {
-      setActing(false)
-    }
-  }
-
-  const refuser = async () => {
-    if (!window.confirm(`Refuser la demande de ${selected.collaborateur_nom} ?`)) return
-    const id = selected.id_demande
-    setActing(true)
-    try {
-      await refuserDemande(id)
-      showToast('Demande refusée')
-      setSelected(null)
-      runPipelineAnimation()
-      setJustDecided((prev) => ({ ...prev, [id]: 'refusee' }))
-      setTimeout(() => {
-        onChanged()
-        setJustDecided((prev) => { const next = { ...prev }; delete next[id]; return next })
-      }, 1400)
-    } catch (err) {
-      console.error(err)
-      showToast('Erreur lors du refus')
-    } finally {
-      setActing(false)
-    }
-  }
-
-  const enAttente = demandes
-    .filter((d) => d.statut === 'attente' || d.statut === 'envoye')
-    .sort((a, b) => new Date(a.date_reception) - new Date(b.date_reception))
-
-  const historique = demandes
-    .filter((d) => d.statut === 'validee' || d.statut === 'refusee')
-    .sort((a, b) => new Date(b.date_validation || b.date_reception) - new Date(a.date_validation || a.date_reception))
-    .slice(0, 8)
+  const toutes = [...demandes].sort((a, b) => new Date(b.date_reception) - new Date(a.date_reception))
 
   const periodeLabel = selected && (selected.date_debut || selected.date_fin)
     ? `${selected.date_debut ? new Date(selected.date_debut).toLocaleDateString('fr-FR') : '—'} → ${selected.date_fin ? new Date(selected.date_fin).toLocaleDateString('fr-FR') : '—'}`
@@ -1316,146 +1527,75 @@ function Demandes({ demandes, showToast, onChanged }) {
   return (
     <>
       <div className="page-head">
-        <h2>Demandes hors-équipe</h2>
-        <p>
-          Chaque demande d'un collaborateur déclenche un mail de vérification préformaté vers un destinataire
-          externe&nbsp;; dès confirmation, la tâche est validée automatiquement et intégrée au dossier.
-        </p>
+        <h2>Activité hors-équipe</h2>
+        <p>Vue en lecture seule des activités hors-équipe déclarées par les collaborateurs, avec leur statut.</p>
       </div>
 
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div className="card-head"><div><h2>Processus de validation</h2></div></div>
-        <div className="process-stepper">
-          {PROCESS_STEPS.map((step, i) => {
-            const isDone = i < 2 || !!pipelineExtraDone[i]
-            const isCurrent = !isDone && [2, 3, 4].find((idx) => !(idx < 2 || pipelineExtraDone[idx])) === i
-            return (
-              <div key={step.label} className={`process-step ${isDone ? 'done' : isCurrent ? 'current' : ''}`}>
-                <span className="process-line" />
-                <span className="process-dot">{isDone ? '✓' : i + 1}</span>
-                <span className="process-step-label">{step.label}</span>
-              </div>
-            )
-          })}
-        </div>
-      </div>
-
-      <div className="grid-2">
-        <div className="card">
-          <div className="card-head">
-            <div>
-              <h2>En attente de vérification</h2>
-              <div className="hint">{enAttente.length} demande{enAttente.length > 1 ? 's' : ''}</div>
-            </div>
-          </div>
-          <div className="list">
-            {enAttente.map((d) => {
-              const decision = justDecided[d.id_demande]
-              return (
-                <div
-                  className={`list-item${decision ? ` decision-flash decision-${decision}` : ''}`}
-                  key={d.id_demande}
-                >
-                  <div className="avatar sm">{initials(d.collaborateur_nom)}</div>
-                  <div className="body">
-                    <div className="title">{d.collaborateur_nom}</div>
-                    <div className="desc">{d.description}</div>
-                    <div className="meta">
-                      <span>{relativeDays(d.date_reception)}</span>
-                      <span className={`statut-pill ${statutBadge(decision || d.statut).cls}`}>{statutBadge(decision || d.statut).label}</span>
-                    </div>
-                  </div>
-                  <div className="actions">
-                    <button className="btn btn-ghost btn-sm" disabled={!!decision} onClick={() => ouvrirModale(d)}>
-                      {d.statut === 'envoye' ? 'Relancer' : 'Compléter destinataire'}
-                    </button>
-                  </div>
-                </div>
-              )
-            })}
-            {enAttente.length === 0 && (
-              <div className="list-item"><div className="body"><div className="desc">Aucune demande en attente</div></div></div>
-            )}
+      <div className="card">
+        <div className="card-head">
+          <div>
+            <h2>Toutes les activités</h2>
+            <div className="hint">{toutes.length} activité{toutes.length > 1 ? 's' : ''}</div>
           </div>
         </div>
-
-        <div className="card">
-          <div className="card-head"><div><h2>Historique récent</h2></div></div>
-          <div className="list">
-            {historique.map((d) => (
-              <div className="list-item" key={d.id_demande}>
-                <div className="body">
-                  <div className="title">{d.collaborateur_nom}</div>
-                  <div className="desc">
-                    {d.description}
-                    {d.statut === 'validee'
-                      ? ` — validée le ${formatDateShortFr(d.date_validation)}`
-                      : ' — non confirmée'}
-                  </div>
-                </div>
-                <div className="actions">
+        <div className="list">
+          {toutes.map((d) => (
+            <div className="list-item" key={d.id_demande} style={{ cursor: 'pointer' }} onClick={() => setSelected(d)}>
+              <div className="avatar sm">{initials(d.collaborateur_nom)}</div>
+              <div className="body">
+                <div className="title">{d.collaborateur_nom}</div>
+                <div className="desc">{d.titre}</div>
+                <div className="meta">
+                  <span>{relativeDays(d.date_reception)}</span>
                   <span className={`statut-pill ${statutBadge(d.statut).cls}`}>{statutBadge(d.statut).label}</span>
                 </div>
               </div>
-            ))}
-            {historique.length === 0 && (
-              <div className="list-item"><div className="body"><div className="desc">Aucune demande traitée pour le moment</div></div></div>
-            )}
-          </div>
+            </div>
+          ))}
+          {toutes.length === 0 && (
+            <div className="list-item"><div className="body"><div className="desc">Aucune activité hors-équipe pour le moment</div></div></div>
+          )}
         </div>
       </div>
 
       {selected && (
-        <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) fermerModale() }}>
+        <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setSelected(null) }}>
           <div className="modal-card">
-            <button type="button" className="modal-close" onClick={fermerModale} aria-label="Fermer">×</button>
-            <div className="modal-title">{selected.statut === 'envoye' ? 'Relancer la vérification' : 'Compléter le destinataire'}</div>
+            <button type="button" className="modal-close" onClick={() => setSelected(null)} aria-label="Fermer">×</button>
+            <div className="modal-title">Détail de l'activité</div>
             <div className="modal-sub">
-              <strong style={{ color: 'var(--text)' }}>{selected.collaborateur_nom}</strong> — {selected.description}
+              <strong style={{ color: 'var(--text)' }}>{selected.collaborateur_nom}</strong> — {selected.titre}
             </div>
 
-            <div style={{ background: 'var(--bg)', borderRadius: 10, padding: '12px 14px', marginBottom: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {selected.contexte && (
-                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}><b style={{ color: 'var(--text)' }}>Contexte : </b>{selected.contexte}</div>
+            <div style={{ background: 'var(--bg)', borderRadius: 10, padding: '12px 14px', marginBottom: 6, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                <b style={{ color: 'var(--text)' }}>Statut : </b>
+                <span className={`statut-pill ${statutBadge(selected.statut).cls}`}>{statutBadge(selected.statut).label}</span>
+              </div>
+              {selected.description && (
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}><b style={{ color: 'var(--text)' }}>Description : </b>{selected.description}</div>
               )}
               {periodeLabel && (
                 <div style={{ fontSize: 12, color: 'var(--text-muted)' }}><b style={{ color: 'var(--text)' }}>Période : </b>{periodeLabel}</div>
               )}
-              {selected.contact_responsable && (
-                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}><b style={{ color: 'var(--text)' }}>Contact fourni : </b>{selected.contact_responsable}</div>
+              {selected.equipes_noms ? (
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}><b style={{ color: 'var(--text)' }}>Équipe(s) concernée(s) : </b>{selected.equipes_noms}</div>
+              ) : (
+                <>
+                  {selected.sous_equipe_nom && (
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)' }}><b style={{ color: 'var(--text)' }}>Sous-équipe concernée : </b>{selected.sous_equipe_nom}</div>
+                  )}
+                  {selected.up_nom && (
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)' }}><b style={{ color: 'var(--text)' }}>Équipe hors UP concernée : </b>{selected.up_nom}</div>
+                  )}
+                </>
               )}
-              {!selected.contexte && !periodeLabel && !selected.contact_responsable && (
+              {selected.contact_responsable && (
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}><b style={{ color: 'var(--text)' }}>Responsable(s) informé(s) : </b>{selected.contact_responsable}</div>
+              )}
+              {!selected.description && !periodeLabel && !selected.equipes_noms && !selected.sous_equipe_nom && !selected.up_nom && (
                 <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>Aucune information complémentaire fournie</div>
               )}
-            </div>
-
-            <div className="field full" style={{ marginBottom: 16 }}>
-              <label>Destinataire de vérification</label>
-              <input
-                type="email"
-                placeholder="email@partenaire.tn"
-                value={destinataire}
-                onChange={(e) => setDestinataire(e.target.value)}
-                autoFocus
-              />
-            </div>
-
-            <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }} disabled={sending || acting} onClick={envoyer}>
-              {sending ? 'Envoi…' : selected.statut === 'envoye' ? 'Renvoyer le mail de vérification' : 'Envoyer le mail de vérification'}
-            </button>
-
-            <div style={{ marginTop: 18, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '.03em' }}>
-                Action manuelle (si confirmation reçue autrement)
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <button className="btn btn-ghost btn-sm" style={{ flex: 1, justifyContent: 'center' }} disabled={sending || acting} onClick={valider}>
-                  Valider directement
-                </button>
-                <button className="btn btn-ghost btn-sm" style={{ flex: 1, justifyContent: 'center', color: 'var(--red-dark)' }} disabled={sending || acting} onClick={refuser}>
-                  Refuser
-                </button>
-              </div>
             </div>
           </div>
         </div>
@@ -1465,7 +1605,7 @@ function Demandes({ demandes, showToast, onChanged }) {
 }
 
 /* ================= SOUS-ÉQUIPES ================= */
-function SousEquipesPage({ teams, loadingTeams, horsUpTeams, loadingHorsUp, users, showToast, onChanged, onHorsUpChanged, onUsersChanged }) {
+function SousEquipesPage({ teams, loadingTeams, horsUpTeams, loadingHorsUp, users, showToast, confirm, onChanged, onHorsUpChanged, onUsersChanged }) {
   const responsables = users.filter((u) => u.role === 'responsable')
   const collaborateurs = users.filter((u) => u.role === 'collaborateur')
   const key = (u) => (u.email || u.identifiant_esprit || '').toLowerCase()
@@ -1748,7 +1888,13 @@ function SousEquipesPage({ teams, loadingTeams, horsUpTeams, loadingHorsUp, user
   }
 
   const remove = async (t) => {
-    if (!window.confirm(`Supprimer la sous-équipe "${t.nom}" ? Cette action est irréversible.`)) return
+    const ok = await confirm({
+      title: 'Supprimer cette équipe ?',
+      message: `Supprimer la sous-équipe « ${t.nom} » ? Cette action est irréversible.`,
+      confirmLabel: 'Supprimer',
+      danger: true,
+    })
+    if (!ok) return
     setDeletingId(t.id)
     try {
       if (t.type === 'up') await deleteSousEquipe(t.id)
@@ -1928,6 +2074,9 @@ function SousEquipesPage({ teams, loadingTeams, horsUpTeams, loadingHorsUp, user
                   </select>
                 </div>
                 <div className="field"><label>Date d'échéance</label><input type="date" value={tacheEcheance} onChange={(e) => setTacheEcheance(e.target.value)} /></div>
+                {warningDateSeule(tacheEcheance) && (
+                  <div className="field full"><div className="date-warning">⚠ {warningDateSeule(tacheEcheance)}</div></div>
+                )}
                 <div className="field full" style={{ display: 'flex', justifyContent: 'flex-end' }}>
                   <button className="btn btn-primary" disabled={savingTache} onClick={submitTache}>{savingTache ? 'Affectation…' : 'Affecter la tâche'}</button>
                 </div>
@@ -2341,530 +2490,516 @@ function ExpertiseModal({ professeur, onClose, showToast, onChanged }) {
   )
 }
 
-/* ================= VŒUX PÉDAGOGIQUES ================= */
-// Les 8 questions sont fixes (cahier des charges) ; seules les listes de choix de
-// modules (Q1, Q3, Q5) sont gérées par l'admin, campagne par campagne.
-const VP_QUESTIONS = {
-  q1: 'Veuillez indiquer vos préférences quant aux modules que vous souhaitez enseigner',
-  q2: "Souhaitez-vous enseigner les modules offerts dans le cadre de la formation en alternance ?",
-  q3: 'Si oui, veuillez choisir le(s) module(s)',
-  q4: 'Souhaitez-vous enseigner les modules offerts pour la classe internationale (enseignée en anglais) ?',
-  q5: 'Si oui, veuillez choisir le(s) module(s)',
-  q6: 'Souhaitez-vous avoir des heures supplémentaires ?',
-  q7: "Si oui, veuillez préciser le nombre d'heures",
-  q8: 'Souhaitez-vous mentionner autre chose ? (facultatif)',
-}
+/* ================= VŒUX PÉDAGOGIQUES (formulaire dynamique) ================= */
+// Refonte complète : plus de 8 questions fixes. L'admin construit lui-même le
+// formulaire (questions + réponses possibles), pour les questions de type
+// "module" il ajoute aussi la liste des classes de chaque module. Une fois le
+// formulaire envoyé, les réponses des collaborateurs remontent ici, et l'admin
+// affecte les classes disponibles module par module (page "Affectation").
 
 function vpStatutBadge(statut) {
   const map = {
     brouillon: { label: 'Brouillon', cls: 'gray' },
     publiee: { label: 'Envoyée', cls: 'blue' },
-    cloturee: { label: 'Clôturée', cls: 'green' },
+    cloturee: { label: 'Clôturée', cls: 'validee' },
   }
   return map[statut] || { label: statut, cls: 'gray' }
 }
 
-function ChipListEditor({ label, items, onChange, disabled, placeholder }) {
-  const [input, setInput] = useState('')
-  const add = () => {
-    const v = input.trim()
-    if (!v || items.includes(v)) { setInput(''); return }
-    onChange([...items, v])
-    setInput('')
-  }
-  return (
-    <div className="field full">
-      <label>{label}</label>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: disabled ? 0 : 8 }}>
-        {items.length === 0 && <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>Aucun module ajouté</span>}
-        {items.map((it) => (
-          <span key={it} className="role-pill" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            {it}
-            {!disabled && (
-              <button
-                type="button"
-                onClick={() => onChange(items.filter((x) => x !== it))}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', padding: 0, fontSize: 14, lineHeight: 1 }}
-                title="Retirer"
-              >×</button>
-            )}
-          </span>
-        ))}
-      </div>
-      {!disabled && (
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input
-            type="text"
-            placeholder={placeholder || 'Nom du module…'}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add() } }}
-          />
-          <button type="button" className="btn btn-ghost btn-sm" onClick={add}>Ajouter</button>
-        </div>
-      )}
-    </div>
-  )
-}
+const VP_TYPES_QUESTION = [
+  { value: 'modules', label: 'Modules (avec classes à affecter)', color: 'blue' },
+  { value: 'choix_unique', label: 'Choix unique', color: 'amber' },
+  { value: 'choix_multiple', label: 'Choix multiple', color: 'green' },
+  { value: 'texte', label: 'Réponse libre', color: 'muted' },
+]
 
-// Variante de ChipListEditor avec un module ET un niveau côte à côte : chaque
-// module de la liste peut avoir un niveau différent (ex. TLA[3A], proxy2[1A]).
-// Les deux champs sont combinés en une seule chip "Module[Niveau]" à l'ajout ;
-// si aucun niveau n'est saisi, seul le nom du module est ajouté.
-function ModuleNiveauEditor({ label, items, onChange, disabled }) {
-  const [module, setModule] = useState('')
-  const [niveau, setNiveau] = useState('')
-
-  const add = () => {
-    const m = module.trim()
-    const n = niveau.trim()
-    if (!m) return
-    const v = n ? `${m}[${n}]` : m
-    if (items.includes(v)) { setModule(''); setNiveau(''); return }
-    onChange([...items, v])
-    setModule('')
-    setNiveau('')
-  }
-
-  return (
-    <div className="field full">
-      <label>{label}</label>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: disabled ? 0 : 8 }}>
-        {items.length === 0 && <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>Aucun module ajouté</span>}
-        {items.map((it) => (
-          <span key={it} className="role-pill" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            {it}
-            {!disabled && (
-              <button
-                type="button"
-                onClick={() => onChange(items.filter((x) => x !== it))}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', padding: 0, fontSize: 14, lineHeight: 1 }}
-                title="Retirer"
-              >×</button>
-            )}
-          </span>
-        ))}
-      </div>
-      {!disabled && (
-        <div style={{ display: 'flex', gap: 8 }}>
-          <input
-            type="text"
-            placeholder="Module (ex. TLA)"
-            value={module}
-            onChange={(e) => setModule(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add() } }}
-            style={{ flex: 2 }}
-          />
-          <input
-            type="text"
-            placeholder="Niveau (ex. 3A)"
-            value={niveau}
-            onChange={(e) => setNiveau(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add() } }}
-            style={{ flex: 1 }}
-          />
-          <button type="button" className="btn btn-ghost btn-sm" onClick={add}>Ajouter</button>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function VoeuxPedagogiques({ showToast, teams, filtreAnnee, filtreSemestre }) {
+function VoeuxPedagogiques({ showToast, confirm }) {
   const [campagnes, setCampagnes] = useState([])
   const [loading, setLoading] = useState(true)
   const [selectedId, setSelectedId] = useState(null)
-  const [choixModules, setChoixModules] = useState([])
-  const [choixAlternance, setChoixAlternance] = useState([])
-  const [choixInternational, setChoixInternational] = useState([])
-  const [saving, setSaving] = useState(false)
-  const [historiqueOpen, setHistoriqueOpen] = useState(false)
-  const [choixModalOpen, setChoixModalOpen] = useState(false)
-  const [reponses, setReponses] = useState([])
-  const [loadingReponses, setLoadingReponses] = useState(false)
-  const [filtreEquipe, setFiltreEquipe] = useState('all')
-  const [detail, setDetail] = useState(null)
-  const [affecterTarget, setAffecterTarget] = useState(null)
-  const [groupByModule, setGroupByModule] = useState(false)
+  const [tab, setTab] = useState('builder') // 'builder' | 'reponses' | 'affectation'
+  const [creatingTitre, setCreatingTitre] = useState('')
+  const [showNewForm, setShowNewForm] = useState(false)
 
-  const refresh = useCallback((keepSelection) => {
+  const load = () => {
     setLoading(true)
-    return getCampagnesVoeuxPedagogiques()
+    getCampagnesVoeuxPedagogiques()
       .then((data) => {
-        const list = Array.isArray(data) ? data : []
-        setCampagnes(list)
-        if (!keepSelection || !list.some((c) => c.id_campagne === selectedId)) {
-          setSelectedId(list[0]?.id_campagne ?? null)
-        }
+        setCampagnes(data)
+        if (!selectedId && data.length > 0) setSelectedId(data[0].id_campagne)
       })
-      .catch((err) => { console.error(err); showToast('Erreur lors du chargement des campagnes') })
+      .catch((err) => console.error(err))
       .finally(() => setLoading(false))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showToast])
+  }
+  useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => { refresh(false) }, [refresh])
-
-  // Le filtre Année/Semestre du haut de page doit piloter QUELLE campagne est
-  // affichée/gérée ici, pas seulement afficher un avertissement : dès qu'il change
-  // (ou que la liste de campagnes vient de se charger), on bascule automatiquement
-  // sur la campagne dont la date de création correspond à cette période, si elle
-  // existe. Si aucune campagne ne correspond, on garde la sélection actuelle (l'alerte
-  // ci-dessous prévient déjà l'admin, qui peut ouvrir l'historique pour choisir manuellement).
-  useEffect(() => {
-    if (campagnes.length === 0) return
-    const correspondante = campagnes.find((c) => estDansPeriode(c.date_creation, filtreAnnee, filtreSemestre))
-    if (correspondante && correspondante.id_campagne !== selectedId) {
-      setSelectedId(correspondante.id_campagne)
+  const creerCampagne = async () => {
+    try {
+      const c = await createCampagneVoeuxPedagogiques({ titre: creatingTitre.trim() || 'Vœux pédagogiques' })
+      showToast('Formulaire créé — ajoutez vos questions')
+      setCreatingTitre('')
+      setShowNewForm(false)
+      setCampagnes((prev) => [c, ...prev])
+      setSelectedId(c.id_campagne)
+      setTab('builder')
+    } catch (err) {
+      console.error(err)
+      showToast(err?.response?.data?.message || 'Erreur lors de la création')
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filtreAnnee, filtreSemestre, campagnes])
-
-  const selected = campagnes.find((c) => c.id_campagne === selectedId) || null
-
-  useEffect(() => {
-    if (selected) {
-      setChoixModules(selected.choix_modules || [])
-      setChoixAlternance(selected.choix_modules_alternance || [])
-      setChoixInternational(selected.choix_modules_international || [])
-    }
-  }, [selected?.id_campagne])
-
-  // Réponses de la campagne sélectionnée — affichées dans un tableau simple sur la page.
-  useEffect(() => {
-    if (!selected || selected.statut === 'brouillon') { setReponses([]); return }
-    setLoadingReponses(true)
-    getReponsesCampagneVoeuxPedagogiques(selected.id_campagne)
-      .then((data) => setReponses(Array.isArray(data?.reponses) ? data.reponses : []))
-      .catch((err) => { console.error(err); showToast('Erreur lors du chargement des réponses') })
-      .finally(() => setLoadingReponses(false))
-  }, [selected?.id_campagne, selected?.statut, showToast])
-
-  // Une réponse ne reste visible que si elle a elle-même été soumise dans la
-  // période sélectionnée (et pas seulement la campagne à laquelle elle appartient) :
-  // changer l'année/semestre doit faire disparaître les réponses d'une autre période.
-  const filteredReponses = reponses
-    .filter((r) => estDansPeriode(r.date_soumission, filtreAnnee, filtreSemestre))
-    .filter((r) => (filtreEquipe === 'all' ? true : (r.sous_equipes || []).some((se) => String(se.id) === String(filtreEquipe))))
-
-  // Regroupe les réponses par module souhaité (Q1) — un collaborateur ayant
-  // souhaité plusieurs modules apparaît dans chacun des groupes correspondants.
-  const reponsesParModule = (() => {
-    const map = {}
-    filteredReponses.forEach((r) => {
-      (r.modules_souhaites || []).forEach((m) => {
-        if (!map[m]) map[m] = []
-        map[m].push(r)
-      })
-    })
-    return Object.entries(map).sort((a, b) => b[1].length - a[1].length)
-  })()
-
-  // Après une affectation dans la modale de détail, on met à jour la ligne
-  // correspondante dans la liste (et la modale) sans recharger toute la page.
-  const handleAffecte = (updated) => {
-    setReponses((prev) => prev.map((r) => (r.id_reponse === updated.id_reponse ? { ...r, ...updated } : r)))
-    setDetail((prev) => (prev && prev.id_reponse === updated.id_reponse ? { ...prev, ...updated } : prev))
-    setAffecterTarget((prev) => (prev && prev.id_reponse === updated.id_reponse ? { ...prev, ...updated } : prev))
   }
 
-  const handleCreate = () => {
-    createCampagneVoeuxPedagogiques({ titre: 'Vœux pédagogiques' })
-      .then((c) => { showToast('Nouvelle campagne créée'); return refresh(false).then(() => setSelectedId(c.id_campagne)) })
-      .catch((err) => { console.error(err); showToast(err.response?.data?.message || 'Erreur lors de la création') })
-  }
-
-  const handleSaveChoix = () => {
-    if (!selected) return
-    setSaving(true)
-    updateCampagneVoeuxPedagogiques(selected.id_campagne, {
-      titre: selected.titre,
-      choix_modules: choixModules,
-      choix_modules_alternance: choixAlternance,
-      choix_modules_international: choixInternational,
-    })
-      .then(() => { showToast('Choix enregistrés'); return refresh(true) })
-      .catch((err) => { console.error(err); showToast(err.response?.data?.message || 'Erreur lors de l\'enregistrement') })
-      .finally(() => setSaving(false))
-  }
-
-  const handlePublier = () => {
-    if (!selected) return
-    publierCampagneVoeuxPedagogiques(selected.id_campagne)
-      .then(() => { showToast('Questionnaire envoyé à tous les collaborateurs'); refresh(true) })
-      .catch((err) => { console.error(err); showToast(err.response?.data?.message || 'Erreur lors de l\'envoi') })
-  }
-
-  const handleCloturer = () => {
-    if (!selected) return
-    cloturerCampagneVoeuxPedagogiques(selected.id_campagne)
-      .then(() => { showToast('Campagne clôturée'); refresh(true) })
-      .catch((err) => { console.error(err); showToast(err.response?.data?.message || 'Erreur lors de la clôture') })
-  }
-
-  const handleDelete = () => {
-    if (!selected) return
-    deleteCampagneVoeuxPedagogiques(selected.id_campagne)
-      .then(() => { showToast('Brouillon supprimé'); refresh(false) })
-      .catch((err) => { console.error(err); showToast(err.response?.data?.message || 'Erreur lors de la suppression') })
-  }
+  const selected = campagnes.find((c) => c.id_campagne === selectedId)
 
   return (
     <>
-      <div className="page-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 14 }}>
-        <div>
-          <h2>Vœux pédagogiques</h2>
-          <p>Questionnaire à 8 questions envoyé à tous les collaborateurs. Les questions sont fixes ; vous gérez ici uniquement les modules proposés en réponse, campagne par campagne.</p>
-          {selected?.date_creation && !estDansPeriode(selected.date_creation, filtreAnnee, filtreSemestre) && (
-            <p style={{ color: 'var(--amber, #B45309)', fontSize: 12.5, marginTop: 4 }}>
-              La campagne active a été créée hors de la période sélectionnée ({filtreAnnee} · {filtreSemestre === 'S1' ? 'Semestre 1' : 'Semestre 2'}). Ouvrez l'historique pour choisir une campagne de cette période.
-            </p>
-          )}
-        </div>
-        <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
-          {campagnes.length > 0 && (
-            <button className="icon-btn sm" title="Voir l'historique des campagnes" onClick={() => setHistoriqueOpen(true)}><Icon.history /></button>
-          )}
-          <button className="btn btn-primary btn-sm" onClick={handleCreate}><Icon.plus /> Nouvelle campagne</button>
-        </div>
+      <div className="page-head">
+        <h2>Vœux pédagogiques</h2>
+        <p>Créez votre propre formulaire (questions, réponses, classes par module), envoyez-le, puis affectez les classes disponibles.</p>
       </div>
 
-      {campagnes.length === 0 && !loading && (
-        <div className="card">
-          <div className="empty-state">
-            <Icon.poll />
-            <div className="t">Aucune campagne pour l'instant</div>
-            <div className="d">Créez-en une pour envoyer le questionnaire aux collaborateurs.</div>
-          </div>
-        </div>
-      )}
-
-      {selected && (
-        <div className="card">
-          <div className="card-head">
-            <div>
-              <h2>Campagne active</h2>
-              <div className="hint" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                <span>{selected.titre}</span>
-                <span className={`statut-pill ${vpStatutBadge(selected.statut).cls}`}>{vpStatutBadge(selected.statut).label}</span>
-                <span className="vp-count-badge">{selected.nb_reponses ?? 0} réponse(s)</span>
-              </div>
+      <div className="vp-layout">
+        <div className="vp-sidebar">
+          <div className="card">
+            <div className="card-head">
+              <div><h2>Formulaires</h2><div className="hint">{campagnes.length} au total</div></div>
+              <button
+                type="button"
+                className="icon-btn sm"
+                title="Nouveau formulaire"
+                onClick={() => setShowNewForm((v) => !v)}
+                style={showNewForm ? { color: 'var(--red)' } : undefined}
+              >
+                <Icon.plus />
+              </button>
             </div>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <button className="icon-btn sm" title="Modifier les modules proposés" onClick={() => setChoixModalOpen(true)}><Icon.edit /></button>
-              {selected.statut === 'brouillon' && (
-                <>
-                  <button className="btn btn-ghost btn-sm" onClick={handleDelete}><Icon.trash /> Supprimer</button>
-                  <button className="btn btn-primary btn-sm" onClick={handlePublier}>Envoyer aux collaborateurs</button>
-                </>
-              )}
-              {selected.statut === 'publiee' && (
-                <button className="btn btn-primary btn-sm" onClick={handleCloturer}>Clôturer</button>
-              )}
-            </div>
-          </div>
 
-          {selected.statut === 'brouillon' && (
-            <div style={{ padding: '0 20px 20px', color: 'var(--text-faint)', fontSize: 12.5 }}>
-              Cliquez sur <Icon.edit style={{ width: 12, height: 12, verticalAlign: -1 }} /> pour définir les modules proposés (Q1, Q3, Q5), puis envoyez le questionnaire.
-            </div>
-          )}
-
-          {selected.statut !== 'brouillon' && (
-            <>
-              <div className="vp-filter-bar">
-                <div className="hint">{loadingReponses ? 'Chargement…' : `${filteredReponses.length} / ${reponses.length} réponse(s)`}</div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-                  <div className="field">
-                    <label>Filtrer par sous-équipe</label>
-                    <select value={filtreEquipe} onChange={(e) => setFiltreEquipe(e.target.value)}>
-                      <option value="all">Toutes les sous-équipes</option>
-                      {(teams || []).map((t) => (
-                        <option key={t.id_sous_equipe} value={t.id_sous_equipe}>{t.nom}</option>
-                      ))}
-                    </select>
+            {showNewForm && (
+              <div style={{ padding: '0 20px 16px' }}>
+                <div className="vp-new-form-panel" style={{ margin: 0 }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '.02em' }}>Titre du formulaire</label>
+                  <input
+                    type="text"
+                    placeholder="ex. Vœux 2026/2027 - S1"
+                    value={creatingTitre}
+                    onChange={(e) => setCreatingTitre(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); creerCampagne() } }}
+                    autoFocus
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => setShowNewForm(false)}>Annuler</button>
+                    <button type="button" className="btn btn-primary btn-sm" onClick={creerCampagne}>Créer</button>
                   </div>
-                  <button
-                    type="button"
-                    className={`btn btn-sm ${groupByModule ? 'btn-primary' : 'btn-ghost'}`}
-                    onClick={() => setGroupByModule((v) => !v)}
-                  >
-                    <Icon.layers style={{ width: 14, height: 14 }} /> {groupByModule ? 'Vue liste' : 'Grouper par module'}
-                  </button>
                 </div>
               </div>
+            )}
 
-              {!loadingReponses && filteredReponses.length === 0 && (
-                <div style={{ padding: '0 20px 20px', color: 'var(--text-faint)' }}>Aucune réponse pour ce filtre.</div>
-              )}
-
-              {!loadingReponses && filteredReponses.length > 0 && !groupByModule && (
-                <div style={{ overflowX: 'auto', paddingTop: 4 }}>
-                  <table className="vp-table">
-                    <colgroup>
-                      <col style={{ width: '20%' }} />
-                      <col style={{ width: '16%' }} />
-                      <col style={{ width: '13%' }} />
-                      <col />
-                      <col style={{ width: '80px' }} />
-                    </colgroup>
-                    <thead>
-                      <tr>
-                        <th>Collaborateur</th>
-                        <th>Sous-équipe(s)</th>
-                        <th>Répondu le</th>
-                        <th>Affectation</th>
-                        <th></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredReponses.map((r) => (
-                        <tr key={r.id_reponse}>
-                          <td><div className="name-cell"><div className="avatar sm">{initials(r.collaborateur_nom)}</div><span className="n">{r.collaborateur_nom}</span></div></td>
-                          <td>{(r.sous_equipes || []).map((se) => se.nom).join(', ') || '—'}</td>
-                          <td>{r.date_soumission ? new Date(r.date_soumission).toLocaleDateString('fr-FR') : '—'}</td>
-                          <td>
-                            {(r.affectations || []).length > 0
-                              ? (
-                                <div className="vp-affectation-tags">
-                                  {r.affectations.map((a) => (
-                                    <span className="statut-pill green" key={a.id_affectation}>{a.module}</span>
-                                  ))}
-                                </div>
-                              )
-                              : <span className="statut-pill gray">Non affecté</span>}
-                          </td>
-                          <td style={{ textAlign: 'right' }}>
-                            <button className="icon-btn sm" title="Affecter à un module" onClick={() => setAffecterTarget(r)}><Icon.academic /></button>
-                            <button className="icon-btn sm" title="Voir les réponses" onClick={() => setDetail(r)}><Icon.eye /></button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-
-              {!loadingReponses && filteredReponses.length > 0 && groupByModule && (
-                <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
-                  {reponsesParModule.length === 0 && (
-                    <div style={{ color: 'var(--text-faint)' }}>Aucun module souhaité (Q1) dans ce filtre.</div>
-                  )}
-                  {reponsesParModule.map(([module, groupe]) => (
-                    <div key={module} className="vp-module-group">
-                      <div className="vp-module-group-head">
-                        <span className="vp-module-name">{module}</span>
-                        <span className="vp-count-badge">{groupe.length} réponse(s)</span>
-                      </div>
-                      <div className="list">
-                        {groupe.map((r) => (
-                          <div className="list-item" key={r.id_reponse}>
-                            <div className="body">
-                              <div className="name-cell"><div className="avatar sm">{initials(r.collaborateur_nom)}</div><span className="n">{r.collaborateur_nom}</span></div>
-                            </div>
-                            <div className="actions" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                              {(r.affectations || []).some((a) => a.module === module)
-                                ? <span className="statut-pill green">Affecté</span>
-                                : <span className="statut-pill gray">Non affecté</span>}
-                              <button className="icon-btn sm" title="Affecter à un module" onClick={() => setAffecterTarget(r)}><Icon.academic /></button>
-                              <button className="icon-btn sm" title="Voir les réponses" onClick={() => setDetail(r)}><Icon.eye /></button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+            {loading && <div className="hint" style={{ padding: '0 20px 16px' }}>Chargement…</div>}
+            {!loading && (
+              <div className="vp-campagnes-list">
+                {campagnes.map((c) => (
+                  <div
+                    key={c.id_campagne}
+                    className={`vp-campagne-row${c.id_campagne === selectedId ? ' active' : ''}`}
+                    onClick={() => { setSelectedId(c.id_campagne); setTab('builder') }}
+                  >
+                    <div style={{ minWidth: 0 }}>
+                      <div className="title" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.titre}</div>
+                      <div className="hint">{c.nb_reponses} réponse{c.nb_reponses > 1 ? 's' : ''}</div>
                     </div>
-                  ))}
-                </div>
-              )}
-            </>
+                    <span className={`statut-pill ${vpStatutBadge(c.statut).cls}`}>{vpStatutBadge(c.statut).label}</span>
+                  </div>
+                ))}
+                {campagnes.length === 0 && <div className="hint" style={{ padding: '0 12px 12px' }}>Aucun formulaire pour l'instant — créez-en un avec le bouton +.</div>}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="vp-main">
+          {selected ? (
+            <VoeuxCampagneDetail
+              campagne={selected}
+              showToast={showToast}
+              confirm={confirm}
+              tab={tab}
+              setTab={setTab}
+              onChanged={(updated) => {
+                if (updated === null) { setSelectedId(null); load(); return }
+                setCampagnes((prev) => prev.map((c) => (c.id_campagne === updated.id_campagne ? { ...c, ...updated, questions: updated.questions ?? c.questions } : c)))
+              }}
+            />
+          ) : (
+            !loading && <div className="card"><div className="hint" style={{ padding: 20 }}>Sélectionnez un formulaire à gauche, ou créez-en un nouveau.</div></div>
           )}
         </div>
-      )}
-
-      {choixModalOpen && selected && (
-        <VoeuxChoixModal
-          selected={selected}
-          choixModules={choixModules}
-          setChoixModules={setChoixModules}
-          choixAlternance={choixAlternance}
-          setChoixAlternance={setChoixAlternance}
-          choixInternational={choixInternational}
-          setChoixInternational={setChoixInternational}
-          saving={saving}
-          onSave={handleSaveChoix}
-          onClose={() => setChoixModalOpen(false)}
-        />
-      )}
-
-      {detail && (
-        <VoeuxReponseDetail reponse={detail} onClose={() => setDetail(null)} />
-      )}
-
-      {affecterTarget && (
-        <VoeuxAffecterModal
-          reponse={affecterTarget}
-          onClose={() => setAffecterTarget(null)}
-          onAffecte={handleAffecte}
-          showToast={showToast}
-        />
-      )}
-
-      {historiqueOpen && (
-        <VoeuxCampagnesHistorique
-          campagnes={campagnes}
-          selectedId={selectedId}
-          onSelect={(id) => { setSelectedId(id); setHistoriqueOpen(false) }}
-          onClose={() => setHistoriqueOpen(false)}
-          filtreAnnee={filtreAnnee}
-          filtreSemestre={filtreSemestre}
-        />
-      )}
+      </div>
     </>
   )
 }
 
-function VoeuxChoixModal({
-  selected, choixModules, setChoixModules, choixAlternance, setChoixAlternance, choixInternational, setChoixInternational,
-  saving, onSave, onClose,
-}) {
-  const dirty =
-    JSON.stringify(choixModules) !== JSON.stringify(selected.choix_modules || []) ||
-    JSON.stringify(choixAlternance) !== JSON.stringify(selected.choix_modules_alternance || []) ||
-    JSON.stringify(choixInternational) !== JSON.stringify(selected.choix_modules_international || [])
-  const readonly = selected.statut === 'cloturee'
+function VoeuxCampagneDetail({ campagne, showToast, confirm, tab, setTab, onChanged }) {
+  const [full, setFull] = useState(campagne)
+  const [loading, setLoading] = useState(true)
+
+  const reload = () => {
+    getCampagneVoeuxPedagogiques(campagne.id_campagne)
+      .then((data) => { setFull(data); onChanged(data) })
+      .catch((err) => console.error(err))
+      .finally(() => setLoading(false))
+  }
+  useEffect(() => { setLoading(true); reload() }, [campagne.id_campagne]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const isBrouillon = full.statut === 'brouillon'
+
+  const publier = async () => {
+    try {
+      const updated = await publierCampagneVoeuxPedagogiques(campagne.id_campagne)
+      showToast('Formulaire envoyé aux collaborateurs')
+      setFull((f) => ({ ...f, ...updated }))
+      onChanged(updated)
+    } catch (err) {
+      console.error(err)
+      showToast(err?.response?.data?.message || "Erreur lors de l'envoi")
+    }
+  }
+  const cloturer = async () => {
+    const ok = await confirm({ title: 'Clôturer ce formulaire ?', message: 'Les collaborateurs ne pourront plus y répondre.', confirmLabel: 'Clôturer' })
+    if (!ok) return
+    try {
+      const updated = await cloturerCampagneVoeuxPedagogiques(campagne.id_campagne)
+      showToast('Formulaire clôturé')
+      setFull((f) => ({ ...f, ...updated }))
+      onChanged(updated)
+    } catch (err) {
+      console.error(err)
+      showToast(err?.response?.data?.message || 'Erreur')
+    }
+  }
+  const supprimer = async () => {
+    const ok = await confirm({ title: 'Supprimer ce brouillon ?', message: full.titre, confirmLabel: 'Supprimer', danger: true })
+    if (!ok) return
+    try {
+      await deleteCampagneVoeuxPedagogiques(campagne.id_campagne)
+      showToast('Brouillon supprimé')
+      onChanged(null)
+    } catch (err) {
+      console.error(err)
+      showToast(err?.response?.data?.message || 'Erreur')
+    }
+  }
 
   return (
-    <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="modal-card" style={{ maxWidth: 640 }}>
-        <button type="button" className="modal-close" onClick={onClose} aria-label="Fermer">×</button>
-        <div className="modal-title">Modules proposés — {selected.titre}</div>
-        <div className="modal-sub">Ces choix sont ceux vus par les collaborateurs pour les questions à choix multiple.</div>
-
-        <div className="form-grid" style={{ padding: '16px 0 0' }}>
-          <ModuleNiveauEditor
-            label={`Q1 — ${VP_QUESTIONS.q1}`}
-            items={choixModules}
-            onChange={setChoixModules}
-            disabled={readonly}
-          />
-          <ModuleNiveauEditor
-            label={`Q3 — ${VP_QUESTIONS.q3} (alternance)`}
-            items={choixAlternance}
-            onChange={setChoixAlternance}
-            disabled={readonly}
-          />
-          <ModuleNiveauEditor
-            label={`Q5 — ${VP_QUESTIONS.q5} (classe internationale)`}
-            items={choixInternational}
-            onChange={setChoixInternational}
-            disabled={readonly}
-          />
+    <div className="card">
+      <div className="card-head">
+        <div><h2>{full.titre}</h2><div className="hint">{full.nb_reponses ?? 0} réponse{(full.nb_reponses ?? 0) > 1 ? 's' : ''}</div></div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {isBrouillon && <button className="btn btn-ghost btn-sm" style={{ color: 'var(--red-dark)' }} onClick={supprimer}>Supprimer</button>}
+          {isBrouillon && <button className="btn btn-primary btn-sm" onClick={publier}>Envoyer aux collaborateurs</button>}
+          {full.statut === 'publiee' && <button className="btn btn-ghost btn-sm" onClick={cloturer}>Clôturer</button>}
         </div>
+      </div>
+      <div className="vp-tabs">
+        {['builder', 'reponses', 'affectation'].map((t) => (
+          <button
+            key={t}
+            type="button"
+            className={tab === t ? 'active' : ''}
+            onClick={() => setTab(t)}
+          >
+            {t === 'builder' ? 'Questions' : t === 'reponses' ? 'Réponses' : 'Affectation'}
+          </button>
+        ))}
+      </div>
+      <div style={{ padding: 20 }}>
+        {loading && <div className="hint">Chargement…</div>}
+        {!loading && tab === 'builder' && <VoeuxBuilder campagne={full} showToast={showToast} confirm={confirm} onChanged={reload} />}
+        {!loading && tab === 'reponses' && <VoeuxReponses campagne={full} showToast={showToast} />}
+        {!loading && tab === 'affectation' && <VoeuxAffectation campagne={full} showToast={showToast} />}
+      </div>
+    </div>
+  )
+}
 
-        {!readonly && (
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
-            {dirty && <span style={{ alignSelf: 'center', color: 'var(--amber, #B45309)', fontSize: 12.5, marginRight: 'auto' }}>Modifications non enregistrées</span>}
-            <button className="btn btn-ghost btn-sm" onClick={onClose}>Fermer</button>
-            <button className="btn btn-primary btn-sm" disabled={saving} onClick={onSave}>{saving ? 'Enregistrement…' : 'Enregistrer'}</button>
+/* ---------- Onglet "Questions" : le formulaire-builder ---------- */
+/* ---------- Onglet "Questions" : le formulaire-builder ---------- */
+function VoeuxBuilder({ campagne, showToast, confirm, onChanged }) {
+  const isBrouillon = campagne.statut === 'brouillon'
+  const [newType, setNewType] = useState('modules')
+  const [newIntitule, setNewIntitule] = useState('')
+  const [newOptionsTexte, setNewOptionsTexte] = useState('')
+  const needsOptions = newType === 'choix_unique' || newType === 'choix_multiple'
+
+  const ajouterQuestion = async () => {
+    if (!newIntitule.trim()) { showToast("L'intitulé de la question est requis"); return }
+    const options = toStringArrayFrontend(newOptionsTexte)
+    if (needsOptions && options.length === 0) {
+      showToast('Ajoutez au moins une réponse possible (séparées par des virgules)')
+      return
+    }
+    try {
+      await ajouterQuestionVoeuxPedagogiques(campagne.id_campagne, {
+        type: newType,
+        intitule: newIntitule.trim(),
+        obligatoire: true,
+        options: needsOptions ? options : [],
+      })
+      setNewIntitule('')
+      setNewOptionsTexte('')
+      onChanged()
+    } catch (err) {
+      console.error(err)
+      showToast(err?.response?.data?.message || "Erreur lors de l'ajout de la question")
+    }
+  }
+
+  const supprimerQuestion = async (q) => {
+    const ok = await confirm({ title: 'Supprimer cette question ?', message: q.intitule, confirmLabel: 'Supprimer', danger: true })
+    if (!ok) return
+    try {
+      await supprimerQuestionVoeuxPedagogiques(q.id_question)
+      onChanged()
+    } catch (err) {
+      console.error(err)
+      showToast('Erreur lors de la suppression')
+    }
+  }
+
+  const modifierOptions = async (q, options) => {
+    try {
+      await modifierQuestionVoeuxPedagogiques(q.id_question, { type: q.type, intitule: q.intitule, obligatoire: q.obligatoire, options })
+      onChanged()
+    } catch (err) {
+      console.error(err)
+      showToast('Erreur lors de la mise à jour des réponses possibles')
+    }
+  }
+
+  return (
+    <div>
+      {!isBrouillon && (
+        <div className="hint" style={{ marginBottom: 12 }}>
+          Ce formulaire a déjà été envoyé — les questions ne sont plus modifiables.
+        </div>
+      )}
+      {isBrouillon && (
+        <div className="vp-new-question">
+          <div className="vp-new-question-head"><Icon.plus />Nouvelle question</div>
+          <div className="vp-field-row">
+            <div>
+              <label>Type de question</label>
+              <select className="select-chip" value={newType} onChange={(e) => setNewType(e.target.value)}>
+                {VP_TYPES_QUESTION.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label>Intitulé</label>
+              <input
+                type="text"
+                placeholder="ex. Quels modules souhaitez-vous enseigner ?"
+                value={newIntitule}
+                onChange={(e) => setNewIntitule(e.target.value)}
+                style={{ width: '100%' }}
+              />
+            </div>
+          </div>
+          {needsOptions && (
+            <div className="vp-field-row" style={{ gridTemplateColumns: '1fr' }}>
+              <div>
+                <label>Réponses possibles</label>
+                <input
+                  type="text"
+                  placeholder="Séparées par des virgules (ex. Oui, Non, Peut-être)"
+                  value={newOptionsTexte}
+                  onChange={(e) => setNewOptionsTexte(e.target.value)}
+                  style={{ width: '100%' }}
+                />
+              </div>
+            </div>
+          )}
+          {newType === 'modules' && (
+            <div className="hint" style={{ marginTop: 10 }}>
+              La liste des modules proposés se gère dans le bloc « Modules & classes » ci-dessous.
+            </div>
+          )}
+          <div className="vp-new-question-actions">
+            <button className="btn btn-primary btn-sm" onClick={ajouterQuestion}>+ Ajouter la question</button>
+          </div>
+        </div>
+      )}
+
+      {(campagne.questions || []).map((q, i) => {
+        const meta = VP_TYPES_QUESTION.find((t) => t.value === q.type)
+        const accent = { blue: 'var(--blue)', amber: 'var(--amber)', green: 'var(--green)', muted: 'var(--border)' }[meta?.color || 'muted']
+        return (
+          <div key={q.id_question} className="vp-question-card" style={{ '--vp-accent': accent }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+              <div className="vp-question-title-row">
+                <span className="vp-question-num">{i + 1}</span>
+                <div>
+                  <div style={{ fontWeight: 700 }}>{q.intitule}</div>
+                  <span className={`vp-type-badge vp-type-${meta?.color || 'muted'}`}>{meta?.label}</span>
+                </div>
+              </div>
+              {isBrouillon && (
+                <button className="icon-btn sm" title="Supprimer la question" onClick={() => supprimerQuestion(q)}><Icon.trash /></button>
+              )}
+            </div>
+            {(q.type === 'choix_unique' || q.type === 'choix_multiple') && (
+              <VoeuxChoixOptionsEditor question={q} isBrouillon={isBrouillon} onSave={(options) => modifierOptions(q, options)} />
+            )}
+            {q.type === 'modules' && (
+              <VoeuxModulesManager
+                campagne={campagne}
+                question={q}
+                isBrouillon={isBrouillon}
+                showToast={showToast}
+                confirm={confirm}
+                onChanged={onChanged}
+              />
+            )}
+          </div>
+        )
+      })}
+      {(campagne.questions || []).length === 0 && (
+        <div className="hint">Aucune question pour l'instant — ajoutez-en une ci-dessus.</div>
+      )}
+    </div>
+  )
+}
+
+function toStringArrayFrontend(texte) {
+  return texte.split(',').map((s) => s.trim()).filter(Boolean)
+}
+
+// Réponses possibles d'une question à choix (unique ou multiple) : stockées
+// directement sur la question côté serveur, on renvoie la liste complète à
+// chaque modification.
+function VoeuxChoixOptionsEditor({ question, isBrouillon, onSave }) {
+  const [nouvelle, setNouvelle] = useState('')
+
+  const ajouter = () => {
+    if (!nouvelle.trim()) return
+    onSave([...(question.options || []), nouvelle.trim()])
+    setNouvelle('')
+  }
+
+  const retirer = (opt) => {
+    onSave((question.options || []).filter((o) => o !== opt))
+  }
+
+  return (
+    <div className="vp-options-editor">
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        {(question.options || []).map((o) => (
+          <span key={o} className="vp-option-chip">
+            {o}
+            {isBrouillon && <button type="button" onClick={() => retirer(o)}>×</button>}
+          </span>
+        ))}
+        {(question.options || []).length === 0 && <span className="hint">Aucune réponse possible pour l'instant</span>}
+      </div>
+      {isBrouillon && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          <input
+            type="text"
+            placeholder="Ajouter une réponse possible"
+            value={nouvelle}
+            onChange={(e) => setNouvelle(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); ajouter() } }}
+            style={{ flex: 1, minWidth: 180 }}
+          />
+          <button className="btn btn-ghost btn-sm" onClick={ajouter}>+ Ajouter</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Liste des modules proposés pour UNE question de type "modules" donnée
+// (chaque question de ce type a ses propres modules & classes à affecter).
+function VoeuxModulesManager({ campagne, question, isBrouillon, showToast, confirm, onChanged }) {
+  const [nom, setNom] = useState('')
+  const [niveau, setNiveau] = useState('')
+  const [classesTexte, setClassesTexte] = useState('')
+
+  const modulesQuestion = (campagne.modules || []).filter((m) => m.id_question === question.id_question)
+
+  const ajouter = async () => {
+    if (!nom.trim()) { showToast('Le nom du module est requis'); return }
+    if (!niveau.trim()) { showToast('Le niveau du module est requis'); return }
+    const classes = toStringArrayFrontend(classesTexte)
+    if (classes.length === 0) { showToast('Ajoutez au moins une classe (séparées par des virgules)'); return }
+    try {
+      await ajouterModuleVoeuxPedagogiques(campagne.id_campagne, {
+        id_question: question.id_question,
+        nom: nom.trim(),
+        niveau: niveau.trim(),
+        classes,
+      })
+      setNom('')
+      setNiveau('')
+      setClassesTexte('')
+      onChanged()
+    } catch (err) {
+      console.error(err)
+      showToast(err?.response?.data?.message || "Erreur lors de l'ajout du module")
+    }
+  }
+
+  const supprimer = async (m) => {
+    const ok = await confirm({ title: 'Supprimer ce module ?', message: m.nom, confirmLabel: 'Supprimer', danger: true })
+    if (!ok) return
+    try {
+      await supprimerModuleVoeuxPedagogiques(m.id_module)
+      onChanged()
+    } catch (err) {
+      console.error(err)
+      showToast('Erreur lors de la suppression du module')
+    }
+  }
+
+  return (
+    <div className="card" style={{ marginTop: 12 }}>
+      <div className="card-head"><div><h2>Modules &amp; classes</h2><div className="hint">Proposés dans « {question.intitule} »</div></div></div>
+      <div style={{ padding: '0 20px 20px' }}>
+       {modulesQuestion.map((m) => (
+          <div key={m.id_module} className="vp-module-row">
+            <div className="vp-module-row-head">
+              <b>{m.nom}</b>
+              {m.niveau && <span className="badge" style={{ marginLeft: 8 }}>{m.niveau}</span>}
+              {isBrouillon && <button className="icon-btn sm" title="Supprimer" onClick={() => supprimer(m)}><Icon.trash /></button>}
+            </div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+              {(m.classes || []).map((c) => <span key={c} className="vp-option-chip">{c}</span>)}
+              {(m.classes || []).length === 0 && <span className="hint">Aucune classe</span>}
+            </div>
+          </div>
+        ))}
+        {modulesQuestion.length === 0 && <div className="hint" style={{ padding: '8px 0' }}>Aucun module pour l'instant — ajoutez-en un ci-dessous.</div>}
+        {isBrouillon && (
+          <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              placeholder="Nom du module (ex. Algorithmique 2)"
+              value={nom}
+              onChange={(e) => setNom(e.target.value)}
+              style={{ flex: 1, minWidth: 160 }}
+            />
+            <input
+              type="text"
+              placeholder="Niveau (ex. 2ème année)"
+              value={niveau}
+              onChange={(e) => setNiveau(e.target.value)}
+              style={{ flex: 1, minWidth: 140 }}
+            />
+            <input
+              type="text"
+              placeholder="Classes séparées par des virgules (ex. 2A-G1, 2A-G2)"
+              value={classesTexte}
+              onChange={(e) => setClassesTexte(e.target.value)}
+              style={{ flex: 1, minWidth: 220 }}
+            />
+            <button className="btn btn-ghost btn-sm" onClick={ajouter}>+ Ajouter un module</button>
           </div>
         )}
       </div>
@@ -2872,319 +3007,211 @@ function VoeuxChoixModal({
   )
 }
 
-function VoeuxCampagnesHistorique({ campagnes, selectedId, onSelect, onClose, filtreAnnee, filtreSemestre }) {
-  const [showAll, setShowAll] = useState(false)
-  const campagnesAffichees = showAll
-    ? campagnes
-    : campagnes.filter((c) => estDansPeriode(c.date_creation, filtreAnnee, filtreSemestre))
+/* ---------- Onglet "Réponses" ---------- */
+function VoeuxReponses({ campagne, showToast }) {
+  const [reponses, setReponses] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [detail, setDetail] = useState(null)
+
+  useEffect(() => {
+    setLoading(true)
+    getReponsesCampagneVoeuxPedagogiques(campagne.id_campagne)
+      .then((data) => setReponses(data.reponses || []))
+      .catch((err) => { console.error(err); showToast('Erreur lors du chargement des réponses') })
+      .finally(() => setLoading(false))
+  }, [campagne.id_campagne]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (loading) return <div className="hint">Chargement…</div>
+  if (reponses.length === 0) return <div className="hint">Aucune réponse pour l'instant</div>
 
   return (
-    <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <div className="modal-card" style={{ maxWidth: 520, padding: 0, overflow: 'hidden' }}>
-        <div style={{ padding: '24px 24px 0' }}>
-          <button type="button" className="modal-close" onClick={onClose} aria-label="Fermer">×</button>
-          <div className="modal-title">Historique des campagnes</div>
-          <div className="modal-sub">
-            {campagnesAffichees.length} campagne(s){!showAll && ` · ${filtreAnnee} · ${filtreSemestre === 'S1' ? 'Semestre 1' : 'Semestre 2'}`}
-            {' — '}
-            <button
-              type="button"
-              onClick={() => setShowAll((v) => !v)}
-              style={{ background: 'none', border: 'none', color: 'var(--blue, #3B82F6)', cursor: 'pointer', padding: 0, textDecoration: 'underline', fontSize: 'inherit' }}
-            >
-              {showAll ? 'Filtrer par période sélectionnée' : 'Voir toutes les périodes'}
-            </button>
-          </div>
-        </div>
-        <div className="list" style={{ maxHeight: 440, overflowY: 'auto', marginTop: 12 }}>
-          {campagnesAffichees.map((c) => (
-            <div
-              className="list-item"
-              key={c.id_campagne}
-              style={{ cursor: 'pointer', background: c.id_campagne === selectedId ? 'var(--bg)' : undefined }}
-              onClick={() => onSelect(c.id_campagne)}
-            >
-              <div className="body">
-                <div className="title">{c.titre}</div>
-                <div className="desc">Créée le {new Date(c.date_creation).toLocaleDateString('fr-FR')} · {c.nb_reponses ?? 0} réponse(s)</div>
-              </div>
-              <div className="actions">
-                <span className={`statut-pill ${vpStatutBadge(c.statut).cls}`}>{vpStatutBadge(c.statut).label}</span>
-              </div>
-            </div>
+    <>
+      <table>
+        <thead><tr><th>Collaborateur</th><th>Sous-équipe(s)</th><th>Soumis le</th><th></th></tr></thead>
+        <tbody>
+          {reponses.map((r) => (
+            <tr key={r.id_reponse}>
+              <td><div className="name-cell"><div className="avatar sm">{initials(r.collaborateur_nom)}</div><span className="n">{r.collaborateur_nom}</span></div></td>
+              <td>{(r.sous_equipes || []).map((s) => s.nom).join(', ') || '—'}</td>
+              <td>{r.date_soumission ? new Date(r.date_soumission).toLocaleDateString('fr-FR') : '—'}</td>
+              <td><button className="btn btn-ghost btn-sm" onClick={() => setDetail(r)}>Voir les réponses</button></td>
+            </tr>
           ))}
-          {campagnesAffichees.length === 0 && (
-            <div className="list-item"><div className="body"><div className="desc">Aucune campagne sur cette période</div></div></div>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function VoeuxReponseDetail({ reponse: r, onClose }) {
-  const QA = ({ q, label, value }) => (
-    <div style={{ marginBottom: 16 }}>
-      <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em', color: 'var(--text-faint)', marginBottom: 5 }}>
-        {q} — {label}
-      </div>
-      <div style={{ fontSize: 13.5, color: 'var(--text)' }}>{value}</div>
-    </div>
-  )
-
-  return (
-    <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }} style={{ zIndex: 1001 }}>
-      <div className="modal-card" style={{ maxWidth: 480 }}>
-        <button type="button" className="modal-close" onClick={onClose} aria-label="Fermer">×</button>
-        <div className="modal-title">{r.collaborateur_nom}</div>
-        <div className="modal-sub">
-          {(r.sous_equipes || []).map((se) => se.nom).join(', ') || 'Aucune sous-équipe'}
-          {r.date_soumission && ` · répondu le ${new Date(r.date_soumission).toLocaleDateString('fr-FR')}`}
-        </div>
-
-        <div style={{ marginTop: 18 }}>
-          <QA q="Q1" label="Modules souhaités" value={r.modules_souhaites.join(', ') || '—'} />
-          <QA q="Q2" label="Alternance" value={r.alternance === 'oui' ? 'Oui' : 'Non'} />
-          <QA q="Q3" label="Modules choisis (alternance)" value={r.alternance === 'oui' ? (r.modules_alternance.join(', ') || '—') : 'Non concerné'} />
-          <QA q="Q4" label="Classe internationale" value={r.international === 'oui' ? 'Oui' : 'Non'} />
-          <QA q="Q5" label="Modules choisis (international)" value={r.international === 'oui' ? (r.modules_international.join(', ') || '—') : 'Non concerné'} />
-          <QA q="Q6" label="Heures supplémentaires" value={r.heures_sup === 'oui' ? 'Oui' : 'Non'} />
-          <QA q="Q7" label="Nombre d'heures" value={r.heures_sup === 'oui' ? `${r.nb_heures_sup}h` : 'Non concerné'} />
-          <QA q="Q8" label="Remarque" value={r.commentaire || '—'} />
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// Modale rapide ouverte directement depuis la liste (icône à côté de l'œil) pour
-// affecter un collaborateur sans passer par le détail complet de sa réponse.
-function VoeuxAffecterModal({ reponse: r, onClose, onAffecte, showToast }) {
-  return (
-    <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }} style={{ zIndex: 1001 }}>
-      <div className="modal-card" style={{ maxWidth: 420 }}>
-        <button type="button" className="modal-close" onClick={onClose} aria-label="Fermer">×</button>
-        <div className="modal-title">Affecter {r.collaborateur_nom}</div>
-        <div className="modal-sub">
-          {r.modules_souhaites?.length > 0 ? `A souhaité : ${r.modules_souhaites.join(', ')}` : 'Aucun module souhaité (Q1)'}
-        </div>
-        <div style={{ marginTop: 16 }}>
-          <AffectationForm reponse={r} onAffecte={onAffecte} showToast={showToast} />
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// Formulaire d'affectation (module + classes) partagé entre le détail
-// complet d'une réponse et la modale rapide ouverte depuis la liste.
-const VP_TYPE_LABELS = {
-  normal: 'Cours normal',
-  alternance: 'Alternance',
-  international: 'Classe internationale',
-  autre: 'Autre',
-}
-
-// Extrait "Niveau" d'un nom de module au format "Module[Niveau]" (tel que
-// saisi par l'admin à la création de la campagne). Retourne '' si absent.
-function extraireNiveau(moduleStr) {
-  const m = /^(.*)\[(.+)\]\s*$/.exec(moduleStr || '')
-  return m ? m[2].trim() : ''
-}
-
-function AffectationForm({ reponse: r, onAffecte, showToast }) {
-  // Un collaborateur peut avoir répondu "oui" à l'alternance et/ou à
-  // l'international, avec des modules différents pour chaque catégorie — le
-  // type est donc choisi explicitement en premier (boutons toujours visibles),
-  // pas seulement déduit d'un groupe caché dans un <select> fermé.
-  const groupes = [
-    { type: 'normal', label: 'Cours normal', items: r.modules_souhaites || [] },
-    { type: 'alternance', label: 'Alternance', items: r.alternance === 'oui' ? (r.modules_alternance || []) : [] },
-    { type: 'international', label: 'Classe internationale', items: r.international === 'oui' ? (r.modules_international || []) : [] },
-  ].filter((g) => g.items.length > 0)
-
-  const typeOptions = [...groupes, { type: 'autre', label: 'Autre' }]
-
-  const affectations = r.affectations || []
-
-  // Le niveau n'est plus un champ séparé : il fait partie du nom du module
-  // (ex. "TLA[3A]"), tel que configuré par l'admin dans la campagne — il est
-  // extrait automatiquement à l'envoi.
-  // Chaque type a son propre brouillon pour la sélection en cours (module,
-  // classes) ; passer de l'un à l'autre ne l'efface jamais. En revanche la
-  // liste d'attente ("pending") est commune à TOUS les types : on peut ainsi
-  // ajouter des modules en Cours normal, puis en Alternance, puis en
-  // international, et tout envoyer d'un coup avec un seul "Affecter et notifier".
-  const emptyDraft = { module: '', customModule: '', classes: [] }
-
-  const [adding, setAdding] = useState(affectations.length === 0)
-  const [type, setType] = useState('')
-  const [drafts, setDrafts] = useState({})
-  const [pending, setPending] = useState([]) // [{ type, module, classes }]
-  const [saving, setSaving] = useState(false)
-  const [removingId, setRemovingId] = useState(null)
-
-  const draft = drafts[type] || emptyDraft
-  const { module, customModule, classes } = draft
-
-  const updateDraft = (patch) => setDrafts((prev) => ({ ...prev, [type]: { ...(prev[type] || emptyDraft), ...patch } }))
-  const setModule = (v) => updateDraft({ module: v })
-  const setCustomModule = (v) => updateDraft({ customModule: v })
-  const setClasses = (v) => updateDraft({ classes: v })
-
-  const modulesDuType = groupes.find((g) => g.type === type)?.items || []
-
-  const resetForm = () => { setType(''); setDrafts({}); setPending([]) }
-
-  const handleChoisirType = (t) => setType(t)
-
-  // Ajoute le module en cours (avec ses classes) à la liste d'attente
-  // commune, puis vide la sélection du type courant pour en choisir un autre
-  // (du même type ou d'un autre — la liste d'attente les garde tous).
-  const handleAjouterModule = () => {
-    const moduleFinal = type === 'autre' ? customModule.trim() : module
-    if (!type) { showToast?.('Choisissez un type (cours normal, alternance…)'); return }
-    if (!moduleFinal) { showToast?.('Choisissez ou saisissez un module'); return }
-    setPending((prev) => [...prev, { type, module: moduleFinal, classes }])
-    updateDraft({ module: '', customModule: '', classes: [] })
-  }
-
-  const handleRetirerPending = (idx) => {
-    setPending((prev) => prev.filter((_, i) => i !== idx))
-  }
-
-  const handleAjouter = () => {
-    // Le module en cours de saisie (pas encore ajouté à la liste) est inclus
-    // automatiquement, pour ne pas obliger à cliquer deux fois.
-    const moduleFinal = type === 'autre' ? customModule.trim() : module
-    const aEnvoyer = moduleFinal ? [...pending, { type, module: moduleFinal, classes }] : pending
-    if (aEnvoyer.length === 0) { showToast?.('Ajoutez au moins un module (choisissez un type puis un module)'); return }
-    setSaving(true)
-    aEnvoyer
-      .reduce(
-        (chain, entry) => chain.then(() => ajouterAffectationVoeuxPedagogiques(r.id_reponse, {
-          module: entry.module,
-          type: entry.type,
-          niveau: extraireNiveau(entry.module),
-          classes: entry.classes,
-        })),
-        Promise.resolve()
-      )
-      .then((updated) => { onAffecte?.(updated); resetForm(); setAdding(false); showToast?.('Collaborateur affecté et notifié par e-mail') })
-      .catch((err) => { console.error(err); showToast?.(err.response?.data?.message || "Erreur lors de l'affectation") })
-      .finally(() => setSaving(false))
-  }
-
-  const handleSupprimer = (idAffectation) => {
-    setRemovingId(idAffectation)
-    supprimerAffectationVoeuxPedagogiques(idAffectation)
-      .then((updated) => { onAffecte?.(updated); showToast?.('Affectation retirée') })
-      .catch((err) => { console.error(err); showToast?.('Erreur lors de la suppression') })
-      .finally(() => setRemovingId(null))
-  }
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {affectations.length > 0 && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {affectations.map((a) => (
-            <div key={a.id_affectation} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '8px 10px', borderRadius: 10, background: 'var(--bg)' }}>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                <span className="statut-pill green">{a.module}</span>
-                {a.type && <span className="role-pill">{VP_TYPE_LABELS[a.type] || a.type}</span>}
-                {a.niveau && <span className="role-pill">{a.niveau}</span>}
-                {a.classes?.length > 0 && <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{a.classes.join(', ')}</span>}
-              </div>
-              <button type="button" className="icon-btn sm" title="Retirer cette affectation" disabled={removingId === a.id_affectation} onClick={() => handleSupprimer(a.id_affectation)}>
-                <Icon.trash />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {!adding && (
-        <div>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAdding(true)}>
-            <Icon.plus style={{ width: 14, height: 14 }} /> Affecter à un {affectations.length > 0 ? 'autre ' : ''}module
-          </button>
-        </div>
-      )}
-
-      {adding && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, paddingTop: affectations.length > 0 ? 10 : 0, borderTop: affectations.length > 0 ? '1px dashed var(--border)' : 'none' }}>
-          <div className="field full">
-            <label>Type</label>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {typeOptions.map((t) => (
-                <button
-                  key={t.type}
-                  type="button"
-                  className={`btn btn-sm ${type === t.type ? 'btn-primary' : 'btn-ghost'}`}
-                  onClick={() => handleChoisirType(t.type)}
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-            {groupes.length === 0 && (
-              <div className="hint" style={{ marginTop: 6 }}>Ce collaborateur n'a souhaité aucun module — utilisez "Autre".</div>
-            )}
-          </div>
-
-          {pending.length > 0 && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {pending.map((p, idx) => (
-                <div key={`${p.type}-${p.module}-${idx}`} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: '6px 10px', borderRadius: 10, background: 'var(--bg)' }}>
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <span className="role-pill">{p.module}</span>
-                    <span style={{ fontSize: 11.5, color: 'var(--text-faint)' }}>{VP_TYPE_LABELS[p.type] || p.type}</span>
-                    {p.classes?.length > 0 && <span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{p.classes.join(', ')}</span>}
+        </tbody>
+      </table>
+      {detail && (
+        <div className="modal-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) setDetail(null) }}>
+          <div className="modal-card">
+            <button type="button" className="modal-close" onClick={() => setDetail(null)} aria-label="Fermer">×</button>
+            <div className="modal-title">Réponses de {detail.collaborateur_nom}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 10 }}>
+              {(campagne.questions || []).length === 0 && <div className="hint">Aucune réponse enregistrée</div>}
+              {(campagne.questions || []).map((q) => {
+                const valeur = detail.reponses_par_question?.[q.id_question]
+                const affichage = Array.isArray(valeur) ? valeur.join(', ') : (valeur || '—')
+                return (
+                  <div key={q.id_question} style={{ borderBottom: '1px solid var(--border)', paddingBottom: 8 }}>
+                    <div style={{ fontSize: 12, color: 'var(--text-faint)', fontWeight: 600 }}>{q.intitule}</div>
+                    <div>{affichage || '—'}</div>
                   </div>
-                  <button type="button" className="icon-btn sm" title="Retirer" onClick={() => handleRetirerPending(idx)}>
-                    <Icon.trash />
-                  </button>
-                </div>
-              ))}
+                )
+              })}
             </div>
-          )}
-
-          {type && type !== 'autre' && (
-            <div className="field full">
-              <label>Module ({VP_TYPE_LABELS[type]})</label>
-              <select value={module} onChange={(e) => setModule(e.target.value)}>
-                <option value="">Sélectionner un module…</option>
-                {modulesDuType.map((m) => <option key={m} value={m}>{m}</option>)}
-              </select>
-            </div>
-          )}
-
-          {type === 'autre' && (
-            <div className="field full">
-              <label>Nom du module</label>
-              <input value={customModule} onChange={(e) => setCustomModule(e.target.value)} placeholder="Nom du module…" />
-            </div>
-          )}
-
-          {type && (
-            <>
-              <ChipListEditor label="Classes" items={classes} onChange={setClasses} placeholder="Ex. 3A-G1" />
-              <div>
-                <button type="button" className="btn btn-ghost btn-sm" onClick={handleAjouterModule}>
-                  <Icon.plus style={{ width: 14, height: 14 }} /> Ajouter ce module et passer au suivant
-                </button>
-              </div>
-            </>
-          )}
-
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-            {affectations.length > 0 && <button type="button" className="btn btn-ghost btn-sm" onClick={() => { setAdding(false); resetForm() }}>Annuler</button>}
-            <button type="button" className="btn btn-primary btn-sm" disabled={saving} onClick={handleAjouter}>
-              {saving ? 'Envoi…' : 'Affecter et notifier'}
-            </button>
           </div>
         </div>
       )}
+    </>
+  )
+}
+
+/* ---------- Onglet "Affectation" : module par module, classe par classe ---------- */
+function VoeuxAffectation({ campagne, showToast }) {
+  const [pool, setPool] = useState([])
+  const [reponses, setReponses] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [affecting, setAffecting] = useState(null)
+  // Classe choisie dans le menu mais pas encore envoyée — l'admin doit cliquer
+  // "Valider" pour confirmer (ou "Annuler" pour revenir en arrière en cas d'erreur
+  // de sélection), plutôt que d'affecter immédiatement au changement du <select>.
+  const [selections, setSelections] = useState({}) // { [`${id_module}-${id_reponse}`]: classe }
+
+  const reload = () => {
+    setLoading(true)
+    Promise.all([
+      getVueAffectationVoeuxPedagogiques(campagne.id_campagne),
+      getReponsesCampagneVoeuxPedagogiques(campagne.id_campagne),
+    ])
+      .then(([affectation, reponsesData]) => {
+        setPool(affectation.pool || [])
+        setReponses(reponsesData.reponses || [])
+      })
+      .catch((err) => { console.error(err); showToast("Erreur lors du chargement de l'affectation") })
+      .finally(() => setLoading(false))
+  }
+  useEffect(() => { reload() }, [campagne.id_campagne]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const cleSelection = (module, candidat) => `${module.id_module}-${candidat.id_reponse}`
+
+  const choisir = (module, candidat, classe) => {
+    setSelections((prev) => ({ ...prev, [cleSelection(module, candidat)]: classe }))
+  }
+
+  const annulerSelection = (module, candidat) => {
+    setSelections((prev) => {
+      const next = { ...prev }
+      delete next[cleSelection(module, candidat)]
+      return next
+    })
+  }
+
+  const confirmer = async (module, candidat) => {
+    const cle = cleSelection(module, candidat)
+    const classe = selections[cle]
+    if (!classe) return
+    setAffecting(cle)
+    try {
+      await affecterClasseVoeuxPedagogiques({ id_reponse: candidat.id_reponse, id_module: module.id_module, classe })
+      showToast(`Classe "${classe}" affectée à ${candidat.collaborateur_nom}`)
+      annulerSelection(module, candidat)
+      reload()
+    } catch (err) {
+      console.error(err)
+      showToast(err?.response?.data?.message || "Erreur lors de l'affectation")
+    } finally {
+      setAffecting(null)
+    }
+  }
+
+  const retirer = async (idAffectation) => {
+    try {
+      await supprimerAffectationVoeuxPedagogiques(idAffectation, campagne.id_campagne)
+      showToast('Affectation retirée — la classe redevient disponible')
+      reload()
+    } catch (err) {
+      console.error(err)
+      showToast('Erreur lors du retrait')
+    }
+  }
+
+  if (loading) return <div className="hint">Chargement…</div>
+
+  if (pool.length === 0) {
+    return <div className="hint">Aucun module défini pour ce formulaire — ajoutez-en dans l'onglet Questions.</div>
+  }
+
+  const candidatsPourModule = (module) =>
+    reponses.filter((r) => {
+      const valeur = r.reponses_par_question?.[module.id_question]
+      return Array.isArray(valeur) && valeur.includes(module.nom)
+    })
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      {pool.map((m) => {
+        const candidats = candidatsPourModule(m)
+        return (
+          <div key={m.id_module} className="vp-question-card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+              <div><b>{m.nom}</b>{m.niveau && <span className="badge" style={{ marginLeft: 8 }}>{m.niveau}</span>}</div>
+              <span className="hint">{m.classes_disponibles.length} classe{m.classes_disponibles.length > 1 ? 's' : ''} disponible{m.classes_disponibles.length > 1 ? 's' : ''}</span>
+            </div>
+
+            {candidats.length === 0 && <div className="hint" style={{ marginTop: 8 }}>Aucun collaborateur n'a choisi ce module</div>}
+
+            {candidats.map((cand) => {
+              const affectationsCand = m.classes_affectees.filter((a) => a.id_reponse === cand.id_reponse)
+              const cle = cleSelection(m, cand)
+              const selection = selections[cle]
+              return (
+                <div key={cand.id_reponse} style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
+                  <div className="name-cell" style={{ minWidth: 160 }}><div className="avatar sm">{initials(cand.collaborateur_nom)}</div><span className="n">{cand.collaborateur_nom}</span></div>
+                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                    {affectationsCand.map((a) => (
+                      <span key={a.id_affectation} className="badge validee" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        {a.classe}
+                        <button type="button" onClick={() => retirer(a.id_affectation)} style={{ border: 'none', background: 'none', cursor: 'pointer', color: 'inherit', fontWeight: 700 }}>×</button>
+                      </span>
+                    ))}
+                  </div>
+                  {selection ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span className="badge attente">{selection} · en attente</span>
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-sm"
+                        disabled={affecting === cle}
+                        onClick={() => confirmer(m, cand)}
+                      >
+                        {affecting === cle ? 'Envoi…' : 'Valider'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        disabled={affecting === cle}
+                        onClick={() => annulerSelection(m, cand)}
+                      >
+                        Annuler
+                      </button>
+                    </div>
+                  ) : (
+                    m.classes_disponibles.length > 0 && (
+                      <select
+                        className="select-chip"
+                        style={{ border: '1px solid var(--border)' }}
+                        value=""
+                        onChange={(e) => { if (e.target.value) choisir(m, cand, e.target.value) }}
+                      >
+                        <option value="">+ Affecter une classe…</option>
+                        {m.classes_disponibles.map((c) => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                    )
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -3332,29 +3359,18 @@ function Evaluation({ teams, horsUpTeams, showToast, filtreAnnee, filtreSemestre
 
   const appliquer = async () => {
     if (total !== 100) { showToast(`Le total des pondérations doit être égal à 100% (actuellement ${total}%)`); return }
-    if (!teamId) { showToast('Sélectionnez une équipe'); return }
     setCalculating(true)
     try {
-      // Pour chaque critère personnalisé noté manuellement, le serveur exige une note ET
-      // une justification écrite (voir JUSTIFICATION_MIN_LENGTH côté backend) — on
-      // combine les deux ici dans le format attendu par calculerScoresEquipe. Les
-      // critères connectés (basés sur les tâches / activité école) sont toujours
-      // recalculés côté serveur à partir des données réelles, quoi qu'on envoie ici.
-      const payload = {}
-      Object.entries(noteEdits).forEach(([idCollaborateur, notesParCritere]) => {
-        payload[idCollaborateur] = {}
-        Object.entries(notesParCritere).forEach(([idCritere, note]) => {
-          payload[idCollaborateur][idCritere] = {
-            note,
-            justification: justificationEdits[idCollaborateur]?.[idCritere] || '',
-          }
-        })
-      })
-      await calculerScores(teamId, payload, teamType, filtreAnnee, filtreSemestre)
-      showToast('Formule appliquée — scores recalculés')
-      const data = await getScores({ sous_equipe: teamId, type: teamType })
-      setScores(data)
-      loadGrille()
+      // Notation manuelle retirée : "Appliquer" recalcule le score de TOUTE
+      // équipe (UP et hors UP), pour tous les collaborateurs du système, en une
+      // fois. Le filtre au-dessus ne sert plus qu'à choisir quelle équipe
+      // afficher ensuite dans "Scores calculés".
+      await calculerScoresPourTous(filtreAnnee, filtreSemestre)
+      showToast('Formule appliquée — scores recalculés pour tous les collaborateurs')
+      if (teamId) {
+        const data = await getScores({ sous_equipe: teamId, type: teamType, annee: filtreAnnee, semestre: filtreSemestre })
+        setScores(data)
+      }
     } catch (err) {
       console.error(err)
       showToast(err?.response?.data?.message || 'Erreur lors du calcul des scores')
@@ -3369,7 +3385,7 @@ function Evaluation({ teams, horsUpTeams, showToast, filtreAnnee, filtreSemestre
     <>
       <div className="page-head">
         <h2>Mode d'évaluation</h2>
-        <p>Définissez les critères d'évaluation et leur pondération : le score final de chaque collaborateur est calculé automatiquement à partir des tâches réalisées et validées, par équipe.</p>
+        <p>Définissez les critères d'évaluation et leur pondération : le score final de chaque collaborateur est calculé automatiquement à partir des tâches réalisées et validées (y compris le nombre de tâches prises en charge), par équipe. Le score se met à jour tout seul dès qu'une tâche change — plus besoin de cliquer sur un bouton pour que ça reste à jour.</p>
       </div>
 
       <div className="grid-2" style={{ marginBottom: 16 }}>
@@ -3398,65 +3414,11 @@ function Evaluation({ teams, horsUpTeams, showToast, filtreAnnee, filtreSemestre
                   onChange={(e) => setValue(c, e.target.value)}
                 />
                 {!c.code && (
-                  <>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 }}>
-                      <span style={{ fontSize: 10.5, color: 'var(--amber)' }}>
-                        Critère personnalisé — note manuelle plafonnée à {PLAFOND_NOTE_MANUELLE}/20, justification obligatoire
-                      </span>
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-sm"
-                        style={{ padding: '2px 8px', fontSize: 10.5 }}
-                        onClick={() => setNotingCritereId((id) => (id === c.id_critere ? null : c.id_critere))}
-                      >
-                        {notingCritereId === c.id_critere ? 'Fermer' : 'Noter les membres'}
-                      </button>
-                    </div>
-                    {notingCritereId === c.id_critere && (
-                      <div style={{ marginTop: 8, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
-                        {membres.map((m) => {
-                          const justif = justificationEdits[m.id_collaborateur]?.[c.id_critere] || ''
-                          const justifTropCourte = justif.length > 0 && justif.length < JUSTIFICATION_MIN_LENGTH
-                          return (
-                            <div key={m.id_collaborateur} style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
-                                <div className="name-cell"><div className="avatar sm">{initials(m.nom)}</div><span className="n">{m.nom}</span></div>
-                                <input
-                                  type="number"
-                                  min="0"
-                                  max={PLAFOND_NOTE_MANUELLE}
-                                  step="0.5"
-                                  placeholder={`—/${PLAFOND_NOTE_MANUELLE}`}
-                                  className="pond-input"
-                                  value={noteEdits[m.id_collaborateur]?.[c.id_critere] ?? ''}
-                                  onChange={(e) => updateNote(m.id_collaborateur, c.id_critere, e.target.value)}
-                                />
-                              </div>
-                              <textarea
-                                placeholder={`Justification obligatoire (min. ${JUSTIFICATION_MIN_LENGTH} caractères) — pourquoi cette note ?`}
-                                rows={2}
-                                style={{
-                                  width: '100%', marginTop: 6, fontFamily: 'Inter', fontSize: 11.5,
-                                  padding: '6px 8px', borderRadius: 'var(--radius-sm)',
-                                  border: `1px solid ${justifTropCourte ? 'var(--red)' : 'var(--border)'}`, resize: 'vertical',
-                                }}
-                                value={justif}
-                                onChange={(e) => updateJustification(m.id_collaborateur, c.id_critere, e.target.value)}
-                              />
-                              {justifTropCourte && (
-                                <div style={{ fontSize: 10, color: 'var(--red)', marginTop: 2 }}>
-                                  Encore {JUSTIFICATION_MIN_LENGTH - justif.length} caractère(s) minimum
-                                </div>
-                              )}
-                            </div>
-                          )
-                        })}
-                        {membres.length === 0 && (
-                          <div style={{ padding: 12, color: 'var(--text-faint)', fontSize: 12 }}>Aucun membre dans cette équipe</div>
-                        )}
-                      </div>
-                    )}
-                  </>
+                  <div style={{ marginTop: 4 }}>
+                    <span style={{ fontSize: 10.5, color: 'var(--amber)' }}>
+                      Critère personnalisé — sans données connectées, il compte pour 0 tant qu'il n'est pas relié à une source objective.
+                    </span>
+                  </div>
                 )}
               </div>
             ))}
@@ -3468,7 +3430,7 @@ function Evaluation({ teams, horsUpTeams, showToast, filtreAnnee, filtreSemestre
           <div className="card-head">
             <div>
               <h2>Scores calculés</h2>
-              <div className="hint">{labelSemestre(filtreSemestre)} · {filtreAnnee}</div>
+              <div className="hint">{labelSemestre(filtreSemestre)} · {filtreAnnee} — filtre d'affichage uniquement</div>
             </div>
             <select
               value={teamSelectValue}
@@ -3523,13 +3485,16 @@ function Evaluation({ teams, horsUpTeams, showToast, filtreAnnee, filtreSemestre
             )}
           </div>
           <div style={{ padding: '0 20px 18px' }}>
+            <div className="hint" style={{ marginBottom: 8, textAlign: 'center' }}>
+
+            </div>
             <button
               className="btn btn-primary btn-sm"
               style={{ width: '100%', justifyContent: 'center' }}
               disabled={calculating}
               onClick={appliquer}
             >
-              {calculating ? 'Calcul en cours…' : "Appliquer la formule d'évaluation"}
+              {calculating ? 'Recalcul en cours pour tous les collaborateurs…' : 'Recalculer maintenant pour tous les collaborateurs'}
             </button>
           </div>
         </div>
@@ -3748,7 +3713,7 @@ function formatOctets(n) {
   return `${val.toFixed(val >= 10 || i === 0 ? 0 : 1)} ${units[i]}`
 }
 
-function Sauvegardes({ showToast }) {
+function Sauvegardes({ showToast, confirm }) {
   const [sauvegardes, setSauvegardes] = useState([])
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
@@ -3819,7 +3784,13 @@ function Sauvegardes({ showToast }) {
   }
 
   const supprimer = async (s) => {
-    if (!window.confirm(`Supprimer la sauvegarde "${s.nom_fichier}" ? Cette action est irréversible.`)) return
+    const ok = await confirm({
+      title: 'Supprimer cette sauvegarde ?',
+      message: `Supprimer la sauvegarde « ${s.nom_fichier} » ? Cette action est irréversible.`,
+      confirmLabel: 'Supprimer',
+      danger: true,
+    })
+    if (!ok) return
     setDeletingId(s.id_sauvegarde)
     try {
       await deleteSauvegarde(s.id_sauvegarde)
@@ -3914,10 +3885,57 @@ function Sauvegardes({ showToast }) {
 }
 
 /* ================= MON PROFIL (admin) ================= */
-function MonProfilAdmin({ user, updateUser, showToast, dark, onToggleDark, params, onChangedParams }) {
+function MonProfilAdmin({ user, updateUser, showToast, dark, onToggleDark, params, onChangedParams, onAnneeAjoutee }) {
   const [profil, setProfil] = useState(null)
   const [loading, setLoading] = useState(true)
   const [savingPref, setSavingPref] = useState(null)
+  const [nouvelleAnnee, setNouvelleAnnee] = useState('')
+  const [ajoutingAnnee, setAjoutingAnnee] = useState(false)
+  const [limiteTaches, setLimiteTaches] = useState('')
+  const [savingLimite, setSavingLimite] = useState(false)
+
+  useEffect(() => {
+    if (params?.limite_taches_collaborateur !== undefined) {
+      setLimiteTaches(String(params.limite_taches_collaborateur))
+    }
+  }, [params?.limite_taches_collaborateur])
+
+  const enregistrerLimiteTaches = async () => {
+    const valeur = Number(limiteTaches)
+    if (!Number.isInteger(valeur) || valeur < 1) {
+      showToast?.('La limite doit être un nombre entier positif')
+      return
+    }
+    setSavingLimite(true)
+    try {
+      await updateParametres({ limite_taches_collaborateur: valeur })
+      onChangedParams?.()
+      showToast?.('Limite de tâches actives mise à jour ✓')
+    } catch (err) {
+      console.error(err)
+      showToast?.(err?.response?.data?.message || 'Erreur lors de la mise à jour de la limite')
+    } finally {
+      setSavingLimite(false)
+    }
+  }
+
+  const ajouterAnnee = async () => {
+    const annee = nouvelleAnnee.trim()
+    if (!/^\d{4}\/\d{4}$/.test(annee)) { showToast?.('Format attendu : AAAA/AAAA (ex. 2027/2028)'); return }
+    setAjoutingAnnee(true)
+    try {
+      await ajouterAnneeSysteme(annee)
+      onChangedParams?.()
+      onAnneeAjoutee?.(annee)
+      setNouvelleAnnee('')
+      showToast?.(`Année ${annee} ajoutée au filtre`)
+    } catch (err) {
+      console.error(err)
+      showToast?.(err?.response?.data?.message || "Erreur lors de l'ajout de l'année")
+    } finally {
+      setAjoutingAnnee(false)
+    }
+  }
 
   const name = profil?.nom || user?.nom || 'Admin'
   const email = profil?.email || user?.email
@@ -4013,8 +4031,60 @@ function MonProfilAdmin({ user, updateUser, showToast, dark, onToggleDark, param
   return (
     <>
       <div className="page-head">
-        <h2>Mon profil</h2>
+        <h2>Paramètres</h2>
         <p>Vos informations de compte, votre sécurité et les réglages système de l'application.</p>
+      </div>
+
+      <div className="card">
+        <div className="card-head">
+          <div>
+            <h2>Période du système</h2>
+            <div className="hint">
+              Période active actuelle : <b>{params?.annee_universitaire}</b> · {params?.semestre_actif === 'S1' ? 'Semestre 1' : 'Semestre 2'}
+            </div>
+          </div>
+        </div>
+        <div style={{ padding: '0 20px 20px' }}>
+          <p className="hint" style={{ marginBottom: 10 }}>
+            Ajoutez une nouvelle année universitaire au filtre en haut de l'écran.
+          </p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              placeholder="Nouvelle année (ex. 2027/2028)"
+              value={nouvelleAnnee}
+              onChange={(e) => setNouvelleAnnee(e.target.value)}
+              style={{ maxWidth: 240 }}
+            />
+            <button className="btn btn-primary btn-sm" disabled={ajoutingAnnee} onClick={ajouterAnnee}>
+              {ajoutingAnnee ? 'Ajout…' : '+ Ajouter cette année au filtre'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-head">
+          <div>
+            <h2>Automatisation</h2>
+            <div className="hint">Nombre maximum de tâches "à faire" / "en cours" qu'un collaborateur peut cumuler en se servant dans le pool commun de son équipe.</div>
+          </div>
+        </div>
+        <div style={{ padding: '0 20px 20px' }}>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+            <input
+              type="number"
+              min="1"
+              placeholder="Ex. 3"
+              value={limiteTaches}
+              onChange={(e) => setLimiteTaches(e.target.value)}
+              style={{ maxWidth: 120 }}
+            />
+            <button className="btn btn-primary btn-sm" disabled={savingLimite} onClick={enregistrerLimiteTaches}>
+              {savingLimite ? 'Enregistrement…' : 'Enregistrer'}
+            </button>
+          </div>
+        </div>
       </div>
 
       <div className="card">
@@ -4096,18 +4166,6 @@ function MonProfilAdmin({ user, updateUser, showToast, dark, onToggleDark, param
         <div>
           <div className="card">
             <div className="card-head"><div><h2>Préférences du compte</h2></div></div>
-            <div className="toggle-row">
-              <div><div className="t">Notifications par email</div><div className="d">Rappels de deadline</div></div>
-              <label className="switch">
-                <input
-                  type="checkbox"
-                  checked={!!profil?.notifications_email}
-                  disabled={loading || savingPref !== null}
-                  onChange={() => togglePref('notifications_email')}
-                />
-                <span className="slider"></span>
-              </label>
-            </div>
             <div className="toggle-row">
               <div><div className="t">Mode sombre</div><div className="d">S'applique à tout l'espace admin (tableau de bord, sous-équipes, rapports…) et reste actif à la reconnexion</div></div>
               <label className="switch">

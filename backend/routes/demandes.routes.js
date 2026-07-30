@@ -2,27 +2,23 @@ import { Router } from 'express'
 import {
   listDemandes,
   listMesDemandes,
+  listDemandesResponsable,
   addDemande,
-  envoyerVerification,
-  valider,
-  refuser,
+  updateStatut,
   removeDemande,
-  confirmerDemande,
 } from '../controllers/demandes.controller.js'
 import { requireAuth, requireRole } from '../middleware/auth.middleware.js'
 
 const router = Router()
 
-// Route publique : lien cliqué depuis l'email de vérification, pas d'authentification.
-router.get('/confirmer', confirmerDemande)
-
 router.get('/', requireAuth, requireRole('admin'), listDemandes)
-// "Mes demandes" — le collaborateur connecté consulte ses propres demandes.
+// "Activités hors-équipe" — le collaborateur connecté consulte les siennes.
 router.get('/mes-demandes', requireAuth, requireRole('collaborateur'), listMesDemandes)
+// "Activité hors-équipe" — le responsable connecté consulte celles de ses équipes.
+router.get('/mes-equipes-demandes', requireAuth, requireRole('responsable'), listDemandesResponsable)
 router.post('/', requireAuth, requireRole('admin', 'collaborateur'), addDemande)
-router.patch('/:id/envoyer', requireAuth, requireRole('admin'), envoyerVerification)
-router.patch('/:id/valider', requireAuth, requireRole('admin'), valider)
-router.patch('/:id/refuser', requireAuth, requireRole('admin'), refuser)
+// Le collaborateur fait évoluer le statut de sa propre activité (à faire / en cours / faite).
+router.patch('/:id', requireAuth, requireRole('collaborateur'), updateStatut)
 router.delete('/:id', requireAuth, requireRole('admin'), removeDemande)
 
 export default router

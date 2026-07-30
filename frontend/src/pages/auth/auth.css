@@ -87,6 +87,8 @@
   width:100%; font-family:'Inter'; font-size:13.5px; padding:12px 14px; border-radius:var(--radius-sm);
   border:1px solid var(--border); background:var(--blue-tint); color:var(--text);
 }
+.login-card .field input:disabled{ background:var(--bg); color:var(--text-faint); cursor:not-allowed; }
+.password-toggle:disabled{ opacity:.4; cursor:not-allowed; }
 .login-card .field select{
   width:100%; font-family:'Inter'; font-size:13px; padding:11px 14px; border-radius:var(--radius-sm);
   border:1px solid var(--border); background:var(--blue-tint); color:var(--text); cursor:pointer;

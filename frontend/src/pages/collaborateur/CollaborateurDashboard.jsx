@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { useAuth } from '../../context/AuthContext.jsx'
 import EspritLogo from '../../components/EspritLogo.jsx'
 import NotificationBell from '../../components/NotificationBell.jsx'
 import { getPasswordChecklist, isPasswordStrong, PASSWORD_RULES_MESSAGE } from '../../utils/passwordrules.js'
+import { warningPeriode } from '../../utils/dateValidation.js'
 import StatsDashboard from '../../components/dashboard/StatsDashboard.jsx'
 import {
   getMonActiviteEcole,
@@ -16,8 +18,13 @@ import {
   getProfesseurDetail,
   getMesTaches,
   updateMaTache,
+  getTachesDisponibles,
+  choisirTache,
   getMesDemandes,
   creerDemande,
+  updateStatutDemande,
+  getMesEquipesAvecResponsable,
+  getMesEquipesHorsUpAvecResponsable,
   getMembresSousEquipe,
   getMonProfil,
   updateMesPreferences,
@@ -26,6 +33,7 @@ import {
   getMonQuestionnaireVoeuxPedagogiques,
   saveMaReponseVoeuxPedagogiques,
   getMesAffectationsVoeuxPedagogiques,
+  getParametres,
 } from '../../services/api.js'
 import './collaborateur.css'
 
@@ -50,13 +58,9 @@ function tacheStatutMeta(statut) {
 const PRIORITE_LABELS = { haute: 'Haute', moyenne: 'Moyenne', basse: 'Basse' }
 
 const DEMANDE_STATUTS = {
-  attente: { label: 'En attente', cls: 'attente' },
-  envoye: { label: 'Vérification envoyée', cls: 'attente' },
-  validee: { label: 'Validée', cls: 'validee' },
-  refusee: { label: 'Refusée', cls: 'nonrealisee' },
-}
-function demandeStatutMeta(statut) {
-  return DEMANDE_STATUTS[statut] || { label: statut, cls: 'gray' }
+  a_faire: { label: 'À faire', cls: 'gray' },
+  en_cours: { label: 'En cours', cls: 'encours' },
+  faite: { label: 'Faite', cls: 'validee' },
 }
 
 function formatDateShortFr(dateStr) {
@@ -64,6 +68,13 @@ function formatDateShortFr(dateStr) {
   const d = new Date(dateStr)
   if (Number.isNaN(d.getTime())) return ''
   return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+function formatDateHeureShortFr(dateStr) {
+  if (!dateStr) return ''
+  const d = new Date(dateStr)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
 
 const ACTIVITE_LABELS = {
@@ -117,8 +128,9 @@ const ACTIVITE_ICONS = {
 
 // Période Année/Semestre — mêmes options et même règle par défaut que le filtre
 // du tableau de bord admin (septembre→janvier = S1, février→août = S2), pour
-// rester cohérent dans toute l'application.
-const ANNEE_OPTIONS = ['2025/2026', '2024/2025']
+// rester cohérent dans toute l'application. La liste des années (anneesOptions)
+// n'est plus figée ici : elle est calculée dans le composant à partir des
+// paramètres système (mêmes années que celles vues/ajoutées par l'admin).
 const SEMESTRE_OPTIONS = [
   { value: 'S1', label: 'Semestre 1' },
   { value: 'S2', label: 'Semestre 2' },
@@ -173,6 +185,7 @@ const NAV_TABS = [
   { page: 'taches', label: 'Mes tâches', icon: 'task' },
   { page: 'horsequipe', label: 'Activités hors-équipe', icon: 'requests' },
   { page: 'voeux-pedagogiques', label: 'Vœux pédagogiques', icon: 'poll' },
+  { page: 'classes-affectees', label: 'Classes affectées', icon: 'book' },
   { page: 'activite-ecole', label: 'Activité école', icon: 'academic' },
   { page: 'profil', label: 'Mon profil', icon: 'profile' },
 ]
@@ -190,11 +203,50 @@ function CollaborateurDashboard() {
   }, [dark])
   const toggleDark = useCallback(() => setDark((d) => !d), [])
 
-  // Filtre Année / Semestre du tableau de bord — purement côté client, même
-  // logique que le filtre équivalent du tableau de bord admin.
+  // Filtre Année / Semestre du tableau de bord — même logique que le filtre
+  // équivalent du tableau de bord admin.
   const defautPeriode = useMemo(periodeParDefaut, [])
   const [filtreAnnee, setFiltreAnnee] = useState(defautPeriode.annee)
   const [filtreSemestre, setFiltreSemestre] = useState(defautPeriode.semestre)
+
+  // Paramètres système (dont la période active définie par l'admin, et les
+  // années universitaires supplémentaires qu'il a ajoutées) — mêmes données
+  // que celles lues par le tableau de bord admin.
+  const [params, setParams] = useState(null)
+
+  // Liste des années universitaires proposées dans le sélecteur : identique
+  // au calcul du tableau de bord admin (fenêtre autour de l'année courante +
+  // années ajoutées par l'admin via Paramètres), pour que collaborateur et
+  // responsable voient toujours les mêmes années que l'admin.
+  const anneesOptions = useMemo(() => {
+    const debut = Number(defautPeriode.annee.split('/')[0])
+    const annees = new Set()
+    for (let i = 2; i >= -2; i--) annees.add(`${debut + i}/${debut + i + 1}`)
+    ;(params?.annees_supplementaires || []).forEach((a) => annees.add(a))
+    return Array.from(annees).sort().reverse()
+  }, [defautPeriode.annee, params])
+
+  // Au premier chargement, on cale le filtre consulté sur la période *active*
+  // du système (définie par l'admin) plutôt que sur la date du jour, pour que
+  // collaborateur/responsable retombent sur la bonne période par défaut.
+  const periodeSyncedRef = useRef(false)
+  useEffect(() => {
+    getParametres()
+      .then((data) => {
+        setParams(data)
+        if (!periodeSyncedRef.current && data?.annee_universitaire && data?.semestre_actif) {
+          periodeSyncedRef.current = true
+          setFiltreAnnee(data.annee_universitaire)
+          setFiltreSemestre(data.semestre_actif)
+        }
+      })
+      .catch((err) => console.error('Erreur chargement paramètres:', err))
+  }, [])
+
+  // Tant que la période consultée (filtreAnnee/filtreSemestre) ne correspond pas
+  // à la période active du système, la page passe en lecture seule (aucune
+  // création/modification possible) — même règle que côté admin.
+  const periodeEstActive = !params || (filtreAnnee === params.annee_universitaire && filtreSemestre === params.semestre_actif)
 
   // Les tâches sont chargées ici (et non dans MesTaches) pour pouvoir afficher
   // le nombre de tâches en cours sous forme de pastille sur l'onglet de navigation.
@@ -224,6 +276,15 @@ function CollaborateurDashboard() {
     refreshTaches()
   }, [role, refreshTaches])
 
+  // Rafraîchissement périodique — évite d'avoir à recharger la page pour voir
+  // apparaître de nouvelles tâches publiées par le responsable (même principe que
+  // le compteur de notifications, voir NotificationBell.jsx).
+  useEffect(() => {
+    if (role !== 'collaborateur') return
+    const id = setInterval(refreshTaches, 20000)
+    return () => clearInterval(id)
+  }, [role, refreshTaches])
+
   useEffect(() => {
     if (role !== 'collaborateur') return
     getMesDemandes()
@@ -231,12 +292,12 @@ function CollaborateurDashboard() {
       .catch((err) => console.error('Erreur chargement demandes:', err))
   }, [role])
 
-  const changerStatutTache = useCallback(async (id, statut, membreConcerne) => {
+  const changerStatutTache = useCallback(async (id, statut, membreConcerne, raisonProbleme) => {
     setSavingId(id)
     // Mise à jour optimiste
-    setTaches((prev) => prev.map((t) => (t.id_tache === id ? { ...t, statut, membre_concerne: membreConcerne || null } : t)))
+    setTaches((prev) => prev.map((t) => (t.id_tache === id ? { ...t, statut, membre_concerne: membreConcerne || null, raison_probleme: raisonProbleme || null } : t)))
     try {
-      await updateMaTache(id, statut, membreConcerne)
+      await updateMaTache(id, statut, membreConcerne, raisonProbleme)
       showToast('Statut mis à jour ✓')
     } catch (err) {
       console.error(err)
@@ -302,7 +363,7 @@ function CollaborateurDashboard() {
               title="Filtrer par année universitaire"
               style={{ border: 'none', background: 'transparent', cursor: 'pointer', font: 'inherit', color: 'inherit' }}
             >
-              {ANNEE_OPTIONS.map((a) => <option key={a} value={a}>{a.replace('/', ' / ')}</option>)}
+              {anneesOptions.map((a) => <option key={a} value={a}>{a.replace('/', ' / ')}</option>)}
             </select>
             <select
               className="select-chip"
@@ -321,6 +382,18 @@ function CollaborateurDashboard() {
 
         <main className="main">
           <div className="content">
+            {!periodeEstActive && activePage !== 'profil' && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8, background: 'var(--amber-tint, #FEF3C7)',
+                color: '#9A6600', border: '1px solid #F5D68A', borderRadius: 10, padding: '10px 16px', marginBottom: 16, fontSize: 13, fontWeight: 600,
+              }}>
+                🔒 Période archivée ({filtreAnnee} · {filtreSemestre === 'S1' ? 'Semestre 1' : 'Semestre 2'}) — lecture seule, aucune création ni modification possible. La période active est {params?.annee_universitaire} · {params?.semestre_actif === 'S1' ? 'Semestre 1' : 'Semestre 2'}.
+              </div>
+            )}
+            {activePage === 'profil' ? (
+              <MonProfil user={user} showToast={showToast} dark={dark} onToggleDark={toggleDark} updateUser={updateUser} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} />
+            ) : (
+            <fieldset disabled={!periodeEstActive} style={{ border: 0, margin: 0, padding: 0 }}>
             {activePage === 'taches' && (
               <>
                 <MesTachesHub
@@ -333,6 +406,7 @@ function CollaborateurDashboard() {
                   demandesCount={demandesCount}
                   filtreAnnee={filtreAnnee}
                   filtreSemestre={filtreSemestre}
+                  onTacheChoisie={refreshTaches}
                 />
                 <div className="card">
                   <div className="card-head"><div><h2>Statistiques (Power BI natif)</h2><div className="hint">Mon espace</div></div></div>
@@ -342,16 +416,16 @@ function CollaborateurDashboard() {
             )}
             {activePage === 'horsequipe' && <ActivitesHorsEquipe showToast={showToast} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} />}
             {activePage === 'voeux-pedagogiques' && <VoeuxPedagogiquesCollab showToast={showToast} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} />}
+            {activePage === 'classes-affectees' && <ClassesAffectees showToast={showToast} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} />}
             {activePage === 'activite-ecole' && (
               <>
-                <MonActiviteEcole showToast={showToast} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} />
+                <MonActiviteEcole showToast={showToast} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} anneesOptions={anneesOptions} />
                 <div style={{ marginTop: 24 }}>
                   <ActiviteEcoleTousLesCollegues showToast={showToast} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} currentUserId={user?.id_collaborateur} />
                 </div>
               </>
             )}
-            {activePage === 'profil' && (
-              <MonProfil user={user} showToast={showToast} dark={dark} onToggleDark={toggleDark} updateUser={updateUser} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} />
+            </fieldset>
             )}
           </div>
         </main>
@@ -371,11 +445,11 @@ function CollaborateurDashboard() {
    reste sur les pages dédiées de la barre de navigation. */
 const MES_TACHES_SOUS_ONGLETS = [
   { key: 'mes-taches', label: 'Mes tâches' },
-  { key: 'horsequipe', label: 'Demandes hors-équipe' },
+  { key: 'horsequipe', label: 'Activités hors-équipe' },
   { key: 'activite-ecole', label: 'Activité école' },
 ]
 
-function MesTachesHub({ showToast, taches, loading, savingId, changerStatut, currentUserId, demandesCount, filtreAnnee, filtreSemestre }) {
+function MesTachesHub({ showToast, taches, loading, savingId, changerStatut, currentUserId, demandesCount, filtreAnnee, filtreSemestre, onTacheChoisie }) {
   const [sousOnglet, setSousOnglet] = useState('mes-taches')
 
   return (
@@ -407,6 +481,7 @@ function MesTachesHub({ showToast, taches, loading, savingId, changerStatut, cur
           demandesCount={demandesCount}
           filtreAnnee={filtreAnnee}
           filtreSemestre={filtreSemestre}
+          onTacheChoisie={onTacheChoisie}
         />
       )}
       {sousOnglet === 'horsequipe' && (
@@ -419,53 +494,86 @@ function MesTachesHub({ showToast, taches, loading, savingId, changerStatut, cur
   )
 }
 
-/* ---------- Onglet "Demandes hors-équipe" de Mes tâches (lecture seule) ----------
+/* ---------- Onglet "Activités hors-équipe" de Mes tâches (lecture seule) ----------
    Même liste que la page "Activités hors-équipe", sans le formulaire de saisie —
-   la soumission d'une nouvelle demande se fait uniquement depuis cette page dédiée. */
+   la déclaration d'une nouvelle activité se fait uniquement depuis cette page dédiée. */
 function DemandesApercu({ showToast, filtreAnnee, filtreSemestre }) {
   const [loading, setLoading] = useState(true)
   const [demandes, setDemandes] = useState([])
+  const [savingId, setSavingId] = useState(null)
 
   useEffect(() => {
     getMesDemandes()
       .then((data) => setDemandes(Array.isArray(data) ? data : []))
-      .catch((err) => { console.error(err); showToast('Erreur lors du chargement de vos demandes') })
+      .catch((err) => { console.error(err); showToast('Erreur lors du chargement de vos activités') })
       .finally(() => setLoading(false))
   }, [showToast])
 
+  // Re-rendu périodique (sans re-fetch) pour recalculer, à la minute près, quel statut
+  // "Faite" a dépassé le délai d'une heure et doit perdre son menu déroulant.
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 30000)
+    return () => clearInterval(id)
+  }, [])
+
   const demandesFiltrees = demandes.filter((d) => estDansPeriode(d.date_reception, filtreAnnee, filtreSemestre))
+
+  const changerStatut = async (id, statut) => {
+    setSavingId(id)
+    // Mise à jour optimiste — le badge change immédiatement, sans réactualisation.
+    setDemandes((prev) => prev.map((d) => (
+      d.id_demande === id ? { ...d, statut, date_validation: statut === 'faite' ? new Date().toISOString() : null } : d
+    )))
+    try {
+      await updateStatutDemande(id, statut)
+    } catch (err) {
+      console.error(err)
+      showToast('Erreur lors de la mise à jour du statut')
+    } finally {
+      setSavingId(null)
+    }
+  }
 
   return (
     <div className="card">
       <div className="card-head">
         <div>
-          <h2>Demandes hors-équipe</h2>
+          <h2>Activités hors-équipe</h2>
           <div className="hint">
-            {loading ? 'Chargement…' : `${demandesFiltrees.length} demande${demandesFiltrees.length > 1 ? 's' : ''} sur la période sélectionnée`}
+            {loading ? 'Chargement…' : `${demandesFiltrees.length} activité${demandesFiltrees.length > 1 ? 's' : ''} sur la période sélectionnée`}
           </div>
         </div>
       </div>
       <div className="list">
-        {demandesFiltrees.map((d) => {
-          const meta = demandeStatutMeta(d.statut)
-          return (
-            <div className="list-item" key={d.id_demande}>
-              <div className="body">
-                <div className="title">{d.description}</div>
-                <div className="desc">
-                  {d.statut === 'validee' && d.date_validation
-                    ? `Validée le ${formatDateShortFr(d.date_validation)}`
-                    : d.statut === 'refusee'
-                      ? 'Refusée'
-                      : relativeDays(d.date_reception)}
-                </div>
+        {demandesFiltrees.map((d) => (
+          <div className="list-item" key={d.id_demande}>
+            <div className="body">
+              <div className="title">{d.titre}</div>
+              <div className="desc">
+                {d.equipes_noms ? `${d.equipes_noms} · ` : d.sous_equipe_nom ? `${d.sous_equipe_nom} · ` : d.up_nom ? `${d.up_nom} · ` : ''}{relativeDays(d.date_reception)}
               </div>
-              <span className={`badge ${meta.cls}`}>{meta.label}</span>
             </div>
-          )
-        })}
+            {estDemandeVerrouilleeParDelai(d) ? (
+              <span className="badge validee" title="Le statut ne peut plus être modifié une heure après validation">
+                Faite ✓ (verrouillée)
+              </span>
+            ) : (
+              <select
+                className="status-select"
+                value={d.statut}
+                disabled={savingId === d.id_demande}
+                onChange={(e) => changerStatut(d.id_demande, e.target.value)}
+              >
+                {Object.entries(DEMANDE_STATUTS).map(([value, s]) => (
+                  <option key={value} value={value}>{s.label}</option>
+                ))}
+              </select>
+            )}
+          </div>
+        ))}
         {!loading && demandesFiltrees.length === 0 && (
-          <div className="list-item"><div className="body"><div className="desc">Aucune demande sur cette période</div></div></div>
+          <div className="list-item"><div className="body"><div className="desc">Aucune activité sur cette période</div></div></div>
         )}
       </div>
     </div>
@@ -485,12 +593,21 @@ function ActiviteEcoleApercu({ showToast, filtreAnnee, filtreSemestre }) {
     evenement: [], comite_organisation: [],
   })
 
-  useEffect(() => {
+  const refresh = useCallback(() => (
     getMonActiviteEcole()
       .then(setDetail)
       .catch((err) => { console.error(err); showToast('Erreur lors du chargement de votre activité école') })
       .finally(() => setLoading(false))
-  }, [showToast])
+  ), [showToast])
+
+  useEffect(() => { refresh() }, [refresh])
+
+  // Rafraîchissement périodique — pour voir apparaître, sans recharger la page, une
+  // activité ajoutée depuis l'onglet "Activité école".
+  useEffect(() => {
+    const id = setInterval(refresh, 20000)
+    return () => clearInterval(id)
+  }, [refresh])
 
   const sectionsFiltrees = Object.keys(ACTIVITE_LABELS).map((type) => ({
     type,
@@ -543,10 +660,27 @@ function ActiviteEcoleApercu({ showToast, filtreAnnee, filtreSemestre }) {
 /* ================= MES TÂCHES (branché à l'API des tâches) ================= */
 // Un collaborateur pouvant appartenir à plusieurs sous-équipes, un filtre par
 // équipe est proposé au-dessus de la liste.
-function MesTaches({ showToast, taches, loading, savingId, changerStatut, currentUserId, demandesCount, filtreAnnee, filtreSemestre }) {
+// Passé ce délai après validation, le statut "Faite" est verrouillé (même règle que
+// côté serveur, voir taches.controller.js -> estVerrouilleeParDelai).
+const DELAI_VERROUILLAGE_FAITE_MS = 60 * 60 * 1000
+const MAX_MOTS_RAISON_PROBLEME = 46
+function compterMots(texte) {
+  return String(texte || '').trim().split(/\s+/).filter(Boolean).length
+}
+function estVerrouilleeParDelai(t) {
+  if (t.statut !== 'validee' || !t.date_validation) return false
+  return Date.now() - new Date(t.date_validation).getTime() > DELAI_VERROUILLAGE_FAITE_MS
+}
+// Même règle pour les activités hors-équipe : verrouillées une heure après passage à "faite".
+function estDemandeVerrouilleeParDelai(d) {
+  if (d.statut !== 'faite' || !d.date_validation) return false
+  return Date.now() - new Date(d.date_validation).getTime() > DELAI_VERROUILLAGE_FAITE_MS
+}
+
+function MesTaches({ showToast, taches, loading, savingId, changerStatut, currentUserId, demandesCount, filtreAnnee, filtreSemestre, onTacheChoisie }) {
   const [equipeFiltre, setEquipeFiltre] = useState('toutes')
-  // Ligne d'édition ouverte pour préciser le membre concerné (statut "Problème de coordination")
-  const [coordEdit, setCoordEdit] = useState(null) // { id, value }
+  // Ligne d'édition ouverte pour préciser le membre concerné + la raison (statut "Problème de coordination")
+  const [coordEdit, setCoordEdit] = useState(null) // { id, idSousEquipe, value, raison }
   // Cache des membres par sous-équipe, pour remplir le menu déroulant "membre concerné"
   const [membresParEquipe, setMembresParEquipe] = useState({})
   const [membresLoading, setMembresLoading] = useState(false)
@@ -554,6 +688,14 @@ function MesTaches({ showToast, taches, loading, savingId, changerStatut, curren
   // cliquer une carte filtre la liste sur ce statut, recliquer la même carte retire le filtre.
   const [statutFiltre, setStatutFiltre] = useState(null) // null | 'en_cours' | 'validee'
   const toggleStatutFiltre = (statut) => setStatutFiltre((prev) => (prev === statut ? null : statut))
+
+  // Re-rendu périodique (sans re-fetch) uniquement pour recalculer, à la minute près,
+  // quelles tâches "Faite" ont dépassé le délai d'une heure et doivent perdre leur menu.
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setTick((n) => n + 1), 30000)
+    return () => clearInterval(id)
+  }, [])
 
   const equipes = Array.from(new Set(taches.map((t) => t.sous_equipe_nom).filter(Boolean))).sort()
 
@@ -581,7 +723,7 @@ function MesTaches({ showToast, taches, loading, savingId, changerStatut, curren
 
   const onChangeStatut = (t, value) => {
     if (value === 'probleme_coordination') {
-      setCoordEdit({ id: t.id_tache, idSousEquipe: t.id_sous_equipe, value: t.membre_concerne || '' })
+      setCoordEdit({ id: t.id_tache, idSousEquipe: t.id_sous_equipe, value: t.membre_concerne || '', raison: t.raison_probleme || '' })
       chargerMembres(t.id_sous_equipe)
       return
     }
@@ -589,10 +731,18 @@ function MesTaches({ showToast, taches, loading, savingId, changerStatut, curren
     changerStatut(t.id_tache, value)
   }
 
+  const nbMotsRaison = compterMots(coordEdit?.raison)
+
   const confirmerCoordination = (id) => {
     const membre = (coordEdit?.value || '').trim()
     if (!membre) { showToast('Veuillez préciser le membre concerné'); return }
-    changerStatut(id, 'probleme_coordination', membre)
+    const raison = (coordEdit?.raison || '').trim()
+    if (!raison) { showToast('Veuillez expliquer le problème'); return }
+    if (compterMots(raison) > MAX_MOTS_RAISON_PROBLEME) {
+      showToast(`La raison ne doit pas dépasser ${MAX_MOTS_RAISON_PROBLEME} mots`)
+      return
+    }
+    changerStatut(id, 'probleme_coordination', membre, raison)
     setCoordEdit(null)
   }
 
@@ -621,6 +771,9 @@ function MesTaches({ showToast, taches, loading, savingId, changerStatut, curren
         </div>
         <div className="kpi"><div className="top"><div className="icon-wrap red"><Icon.requests /></div></div><div className="num">{demandesCount}</div><div className="label">Activités hors-équipe</div></div>
       </div>
+
+      <TachesDisponibles showToast={showToast} onChoisie={onTacheChoisie} />
+
       <div className="card">
         <div className="card-head">
           <div><h2>Mes tâches</h2><div className="hint">{loading ? 'Chargement…' : `${tachesFiltrees.length} tâche${tachesFiltrees.length > 1 ? 's' : ''} assignée${tachesFiltrees.length > 1 ? 's' : ''}`}</div></div>
@@ -640,6 +793,7 @@ function MesTaches({ showToast, taches, loading, savingId, changerStatut, curren
           {tachesFiltrees.map((t) => {
             const isEditingCoord = coordEdit?.id === t.id_tache
             const membresEquipe = (membresParEquipe[t.id_sous_equipe] || []).filter((m) => m.id_collaborateur !== currentUserId)
+            const verrouillee = estVerrouilleeParDelai(t)
             return (
               <div className="list-item" key={t.id_tache} style={{ flexDirection: 'column', alignItems: 'stretch' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
@@ -655,23 +809,31 @@ function MesTaches({ showToast, taches, loading, savingId, changerStatut, curren
                         <span>Membre concerné : {t.membre_concerne}</span>
                       )}
                     </div>
+                    {t.statut === 'probleme_coordination' && t.raison_probleme && (
+                      <div className="desc" style={{ marginTop: 4 }}>« {t.raison_probleme} »</div>
+                    )}
                   </div>
-                  <select
-                    className="status-select"
-                    value={isEditingCoord ? 'probleme_coordination' : (t.statut === 'a_faire' ? '' : t.statut)}
-                    disabled={savingId === t.id_tache}
-                    onChange={(e) => onChangeStatut(t, e.target.value)}
-                  >
-                    {t.statut === 'a_faire' && !isEditingCoord && <option value="" disabled>À faire</option>}
-                    {TACHE_STATUTS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-                  </select>
+                  {verrouillee ? (
+                    <span className="badge validee" title="Le statut ne peut plus être modifié une heure après validation">
+                      Faite ✓ (verrouillée)
+                    </span>
+                  ) : (
+                    <select
+                      className="status-select"
+                      value={isEditingCoord ? 'probleme_coordination' : (t.statut === 'a_faire' ? '' : t.statut)}
+                      disabled={savingId === t.id_tache}
+                      onChange={(e) => onChangeStatut(t, e.target.value)}
+                    >
+                      {t.statut === 'a_faire' && !isEditingCoord && <option value="" disabled>À faire</option>}
+                      {TACHE_STATUTS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                    </select>
+                  )}
                 </div>
                 {isEditingCoord && (
-                  <div className="coord-field open" style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center' }}>
+                  <div className="coord-field open" style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
                     <select
                       value={coordEdit.value}
                       onChange={(e) => setCoordEdit({ ...coordEdit, value: e.target.value })}
-                      style={{ flex: 1, width: 'auto' }}
                       disabled={membresLoading}
                       autoFocus
                     >
@@ -682,8 +844,22 @@ function MesTaches({ showToast, taches, loading, savingId, changerStatut, curren
                         <option key={m.id_collaborateur} value={m.nom}>{m.nom}</option>
                       ))}
                     </select>
-                    <button className="btn btn-primary btn-sm" type="button" onClick={() => confirmerCoordination(t.id_tache)}>Confirmer</button>
-                    <button className="btn btn-ghost btn-sm" type="button" onClick={() => setCoordEdit(null)}>Annuler</button>
+                    <div>
+                      <textarea
+                        rows={2}
+                        placeholder="Expliquez brièvement le problème (46 mots maximum)"
+                        value={coordEdit.raison}
+                        onChange={(e) => setCoordEdit({ ...coordEdit, raison: e.target.value })}
+                        style={{ width: '100%', resize: 'vertical' }}
+                      />
+                      <div className="hint" style={{ textAlign: 'right', color: nbMotsRaison > MAX_MOTS_RAISON_PROBLEME ? 'var(--red)' : undefined }}>
+                        {nbMotsRaison} / {MAX_MOTS_RAISON_PROBLEME} mots
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button className="btn btn-primary btn-sm" type="button" onClick={() => confirmerCoordination(t.id_tache)}>Confirmer</button>
+                      <button className="btn btn-ghost btn-sm" type="button" onClick={() => setCoordEdit(null)}>Annuler</button>
+                    </div>
                   </div>
                 )}
               </div>
@@ -698,48 +874,289 @@ function MesTaches({ showToast, taches, loading, savingId, changerStatut, curren
   )
 }
 
+/* ---------- Pool de tâches non assignées, ouvertes au choix du collaborateur ----------
+   Le responsable publie des tâches sans les assigner à quelqu'un en particulier ; tous
+   les membres de l'équipe en sont notifiés (in-app + e-mail) et peuvent en choisir une,
+   dans la limite du nombre de tâches actives ("à faire"/"en cours") qu'ils ont le droit
+   de cumuler en même temps. */
+function TachesDisponibles({ showToast, onChoisie }) {
+  const [loading, setLoading] = useState(true)
+  const [data, setData] = useState({ taches: [], limite: 3, taches_actives: 0, places_restantes: 0 })
+  const [selectedId, setSelectedId] = useState('')
+  const [choosing, setChoosing] = useState(false)
+
+  const refresh = useCallback(() => (
+    getTachesDisponibles()
+      .then((d) => setData(d && typeof d === 'object' ? d : { taches: [], limite: 3, taches_actives: 0, places_restantes: 0 }))
+      .catch((err) => console.error('Erreur chargement des tâches disponibles:', err))
+      .finally(() => setLoading(false))
+  ), [])
+
+  useEffect(() => {
+    refresh()
+    const id = setInterval(refresh, 20000)
+    return () => clearInterval(id)
+  }, [refresh])
+
+  // Si la tâche sélectionnée disparaît de la liste (prise par quelqu'un d'autre,
+  // rafraîchissement périodique…), on réinitialise la sélection.
+  useEffect(() => {
+    if (selectedId && !data.taches.some((t) => String(t.id_tache) === String(selectedId))) {
+      setSelectedId('')
+    }
+  }, [data.taches, selectedId])
+
+  const tacheSelectionnee = data.taches.find((t) => String(t.id_tache) === String(selectedId))
+
+  const choisir = async () => {
+    if (!tacheSelectionnee) return
+    if (data.places_restantes <= 0) {
+      showToast(`Limite atteinte (${data.limite} tâches actives maximum) — terminez-en une avant d'en choisir une nouvelle`)
+      return
+    }
+    setChoosing(true)
+    try {
+      await choisirTache(tacheSelectionnee.id_tache)
+      showToast(`Tâche "${tacheSelectionnee.titre}" ajoutée à vos tâches ✓`)
+      setSelectedId('')
+      // Rafraîchit la liste des tâches disponibles (celle-ci disparaît) ET la liste
+      // "Mes tâches" du parent, pour qu'elle apparaisse immédiatement sans recharger la page.
+      await Promise.all([refresh(), onChoisie ? onChoisie() : Promise.resolve()])
+    } catch (err) {
+      console.error(err)
+      showToast(err?.response?.data?.message || 'Erreur lors de la prise en charge de la tâche')
+      await refresh()
+    } finally {
+      setChoosing(false)
+    }
+  }
+
+  if (!loading && data.taches.length === 0) return null
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <div>
+          <h2>Tâches disponibles à choisir</h2>
+          <div className="hint">
+            {loading
+              ? 'Chargement…'
+              : `${data.taches.length} tâche${data.taches.length > 1 ? 's' : ''} publiée${data.taches.length > 1 ? 's' : ''} par votre responsable · ${data.places_restantes} place${data.places_restantes > 1 ? 's' : ''} disponible${data.places_restantes > 1 ? 's' : ''} (max ${data.limite} tâches actives)`}
+          </div>
+        </div>
+      </div>
+      <div style={{ padding: '0 20px 20px' }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <select
+            value={selectedId}
+            onChange={(e) => setSelectedId(e.target.value)}
+            style={{ flex: '1 1 260px' }}
+          >
+            <option value="">— Sélectionnez une tâche —</option>
+            {data.taches.map((t) => (
+              <option key={t.id_tache} value={t.id_tache}>
+                {t.titre}{t.date_echeance ? ` · Échéance : ${formatDateShortFr(t.date_echeance)}` : ''}
+              </option>
+            ))}
+          </select>
+          <button
+            className="btn btn-primary btn-sm"
+            type="button"
+            disabled={!tacheSelectionnee || choosing || data.places_restantes <= 0}
+            onClick={choisir}
+            title={data.places_restantes <= 0 ? 'Limite de tâches actives atteinte' : 'Choisir cette tâche'}
+          >
+            {choosing ? 'Prise en charge…' : 'Choisir'}
+          </button>
+        </div>
+        {tacheSelectionnee && (
+          <div className="list-item" style={{ marginTop: 12, border: '1px solid var(--border)', borderRadius: 10 }}>
+            <div className="body">
+              <div className="title">{tacheSelectionnee.titre}</div>
+              {tacheSelectionnee.description && <div className="desc">{tacheSelectionnee.description}</div>}
+              <div className="meta">
+                {tacheSelectionnee.date_echeance && <span>Échéance : {formatDateShortFr(tacheSelectionnee.date_echeance)}</span>}
+                {tacheSelectionnee.priorite && <span className={`badge ${tacheSelectionnee.priorite}`}>{PRIORITE_LABELS[tacheSelectionnee.priorite] || 'Moyenne'}</span>}
+                {tacheSelectionnee.sous_equipe_nom && <span>{tacheSelectionnee.sous_equipe_nom}</span>}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 /* ================= ACTIVITÉS HORS-ÉQUIPE (branché à l'API des demandes) ================= */
+/* Dropdown à choix multiple (fermé par défaut, comme un <select>) — utilisé pour
+   choisir plusieurs équipes (sous-équipes et/ou équipes hors UP) à la fois dans le
+   formulaire "Nouvelle activité hors-équipe". `groups` : [{ label, options: [{ value, label }] }]. */
+function EquipesMultiSelect({ groups, selected, onToggle }) {
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef(null)
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const allOptions = groups.flatMap((g) => g.options)
+  const selectedLabels = selected
+    .map((v) => allOptions.find((o) => o.value === v)?.label)
+    .filter(Boolean)
+
+  return (
+    <div className="multiselect" ref={wrapRef}>
+      <button
+        type="button"
+        className={`multiselect-trigger${open ? ' open' : ''}`}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className={selectedLabels.length ? '' : 'placeholder'}>
+          {selectedLabels.length === 0
+            ? '— Choisir une ou plusieurs équipes —'
+            : selectedLabels.length <= 2
+              ? selectedLabels.join(', ')
+              : `${selectedLabels.length} équipes sélectionnées`}
+        </span>
+        <svg className="chevron" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+      </button>
+      {open && (
+        <div className="multiselect-panel">
+          {allOptions.length === 0 && (
+            <div className="multiselect-empty">Vous n'appartenez à aucune sous-équipe ni équipe hors UP pour le moment.</div>
+          )}
+          {groups.map((g) => (g.options.length > 0 ? (
+            <div key={g.label}>
+              <div className="multiselect-group-label">{g.label}</div>
+              {g.options.map((o) => (
+                <label key={o.value} className="multiselect-option">
+                  <input type="checkbox" checked={selected.includes(o.value)} onChange={() => onToggle(o.value)} />
+                  {o.label}
+                </label>
+              ))}
+            </div>
+          ) : null))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ActivitesHorsEquipe({ showToast, filtreAnnee, filtreSemestre }) {
   const [loading, setLoading] = useState(true)
   const [demandes, setDemandes] = useState([])
   const [submitting, setSubmitting] = useState(false)
+  const [savingId, setSavingId] = useState(null)
+  const [mesEquipes, setMesEquipes] = useState([])
+  const [mesEquipesHorsUp, setMesEquipesHorsUp] = useState([])
 
+  const [titre, setTitre] = useState('')
   const [description, setDescription] = useState('')
-  const [contexte, setContexte] = useState('')
   const [dateDebut, setDateDebut] = useState('')
   const [dateFin, setDateFin] = useState('')
-  const [contact, setContact] = useState('')
+  // Chaque entrée est "se-<id>" (sous-équipe) ou "up-<id>" (équipe hors UP) — le
+  // collaborateur peut cocher plusieurs équipes à la fois, de l'un ou l'autre type ;
+  // chacune notifiera son propre responsable.
+  const [equipesChoisies, setEquipesChoisies] = useState([])
 
   const refresh = useCallback(() => (
     getMesDemandes()
       .then((data) => setDemandes(Array.isArray(data) ? data : []))
-      .catch((err) => { console.error(err); showToast('Erreur lors du chargement de vos demandes') })
+      .catch((err) => { console.error(err); showToast('Erreur lors du chargement de vos activités') })
       .finally(() => setLoading(false))
   ), [showToast])
 
   useEffect(() => { refresh() }, [refresh])
 
+  // Rafraîchissement périodique — pour voir apparaître, sans recharger la page, une
+  // éventuelle activité créée depuis un autre appareil du même compte.
+  useEffect(() => {
+    const id = setInterval(refresh, 20000)
+    return () => clearInterval(id)
+  }, [refresh])
+
+  useEffect(() => {
+    getMesEquipesAvecResponsable()
+      .then((data) => setMesEquipes(Array.isArray(data) ? data : []))
+      .catch((err) => console.error('Erreur chargement de mes sous-équipes:', err))
+    getMesEquipesHorsUpAvecResponsable()
+      .then((data) => setMesEquipesHorsUp(Array.isArray(data) ? data : []))
+      .catch((err) => console.error('Erreur chargement de mes équipes hors UP:', err))
+  }, [])
+
   const demandesFiltrees = demandes.filter((d) => estDansPeriode(d.date_reception, filtreAnnee, filtreSemestre))
 
+  const toggleEquipe = (value) => {
+    setEquipesChoisies((prev) => (
+      prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]
+    ))
+  }
+
+  // Résout chaque "se-<id>"/"up-<id>" coché en objet équipe complet (avec responsable),
+  // pour l'affichage et pour construire le payload envoyé au serveur.
+  const equipesResolues = equipesChoisies
+    .map((value) => {
+      const [type, idRaw] = value.split('-')
+      if (type === 'se') return mesEquipes.find((e) => String(e.id_sous_equipe) === idRaw)
+      if (type === 'up') return mesEquipesHorsUp.find((e) => String(e.id_up) === idRaw)
+      return null
+    })
+    .filter(Boolean)
+  const responsablesAPrevenir = [...new Set(equipesResolues.map((e) => e.responsable_nom).filter(Boolean))]
+  const avertissementDate = warningPeriode(dateDebut, dateFin)
+
   const soumettre = async () => {
-    if (!description.trim()) { showToast('La description est requise'); return }
+    if (!titre.trim()) { showToast('Le titre est requis'); return }
+    if (dateDebut && dateFin && new Date(dateDebut) > new Date(dateFin)) {
+      showToast('La date de début ne peut pas être après la date de fin')
+      return
+    }
     setSubmitting(true)
     try {
-      await creerDemande({
-        description: description.trim(),
-        contexte: contexte.trim() || null,
+      const created = await creerDemande({
+        titre: titre.trim(),
+        description: description.trim() || null,
         date_debut: dateDebut || null,
         date_fin: dateFin || null,
-        contact_responsable: contact.trim() || null,
+        equipes: equipesChoisies.map((value) => {
+          const [type, idRaw] = value.split('-')
+          return { type: type === 'se' ? 'sous_equipe' : 'hors_up', id: idRaw }
+        }),
       })
-      setDescription(''); setContexte(''); setDateDebut(''); setDateFin(''); setContact('')
-      await refresh()
-      showToast('Demande soumise pour validation ✓')
+      // Ajout optimiste — pas besoin d'actualiser la page pour la voir apparaître.
+      setDemandes((prev) => [created, ...prev])
+      setTitre(''); setDescription(''); setDateDebut(''); setDateFin(''); setEquipesChoisies([])
+      showToast(responsablesAPrevenir.length
+        ? `${responsablesAPrevenir.join(', ')} a${responsablesAPrevenir.length > 1 ? 'ont' : ''} été informé(e)(s) ✓`
+        : 'Activité enregistrée ✓')
     } catch (err) {
       console.error(err)
-      showToast('Erreur lors de la soumission de la demande')
+      showToast(err?.response?.data?.message || "Erreur lors de l'enregistrement de l'activité")
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const changerStatut = async (id, statut) => {
+    setSavingId(id)
+    // Mise à jour optimiste — le badge change immédiatement, sans réactualisation.
+    setDemandes((prev) => prev.map((d) => (
+      d.id_demande === id ? { ...d, statut, date_validation: statut === 'faite' ? new Date().toISOString() : null } : d
+    )))
+    try {
+      await updateStatutDemande(id, statut)
+    } catch (err) {
+      console.error(err)
+      showToast('Erreur lors de la mise à jour du statut')
+      refresh()
+    } finally {
+      setSavingId(null)
     }
   }
 
@@ -747,7 +1164,7 @@ function ActivitesHorsEquipe({ showToast, filtreAnnee, filtreSemestre }) {
     <>
       <div className="page-head">
         <h2>Activités hors-équipe</h2>
-        <p>Déclarez une intervention, collaboration, publication ou séminaire réalisé en dehors de votre sous-équipe. La demande est transmise à l'administration pour vérification.</p>
+        <p>Déclarez une intervention, collaboration, publication ou séminaire réalisé en dehors de votre sous-équipe. Les responsables choisis sont simplement informés — il n'y a rien à valider.</p>
       </div>
       <div className="grid-2">
         <div>
@@ -755,16 +1172,40 @@ function ActivitesHorsEquipe({ showToast, filtreAnnee, filtreSemestre }) {
             <div className="card-head"><div><h2>Nouvelle activité hors-équipe</h2><div className="hint">Intervention externe, collaboration, publication, séminaire…</div></div></div>
             <div className="form-grid">
               <div className="field full">
+                <label>Titre</label>
+                <input type="text" placeholder="Ex. Intervention lors du séminaire IEEE Tunisie" value={titre} onChange={(e) => setTitre(e.target.value)} />
+              </div>
+              <div className="field full">
                 <label>Description</label>
-                <input type="text" placeholder="Ex. Intervention lors du séminaire IEEE Tunisie" value={description} onChange={(e) => setDescription(e.target.value)} />
+                <input type="text" placeholder="Ex. Partenariat institution externe" value={description} onChange={(e) => setDescription(e.target.value)} />
               </div>
-              <div className="field">
-                <label>Contexte</label>
-                <input type="text" placeholder="Ex. Partenariat institution externe" value={contexte} onChange={(e) => setContexte(e.target.value)} />
+              <div className="field full">
+                <label>Équipe(s) concernée(s)</label>
+                <EquipesMultiSelect
+                  groups={[
+                    { label: 'Sous-équipes', options: mesEquipes.map((e) => ({ value: `se-${e.id_sous_equipe}`, label: e.nom })) },
+                    { label: 'Équipes hors UP', options: mesEquipesHorsUp.map((e) => ({ value: `up-${e.id_up}`, label: e.nom })) },
+                  ]}
+                  selected={equipesChoisies}
+                  onToggle={toggleEquipe}
+                />
+                {equipesResolues.length > 0 && (
+                  <div className="multiselect-chips">
+                    {equipesResolues.map((e) => {
+                      const value = e.id_sous_equipe !== undefined ? `se-${e.id_sous_equipe}` : `up-${e.id_up}`
+                      return (
+                        <span className="multiselect-chip" key={value}>
+                          {e.nom}
+                          <button type="button" onClick={() => toggleEquipe(value)} aria-label={`Retirer ${e.nom}`}>×</button>
+                        </span>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
-              <div className="field">
-                <label>Contact du responsable (vérification)</label>
-                <input type="email" placeholder="responsable@institution.tn" value={contact} onChange={(e) => setContact(e.target.value)} />
+              <div className="field full">
+                <label>Responsable(s) à prévenir</label>
+                <input type="text" value={responsablesAPrevenir.length ? responsablesAPrevenir.join(', ') : '—'} disabled readOnly />
               </div>
               <div className="field">
                 <label>Date de début</label>
@@ -774,9 +1215,12 @@ function ActivitesHorsEquipe({ showToast, filtreAnnee, filtreSemestre }) {
                 <label>Date de fin</label>
                 <input type="date" value={dateFin} onChange={(e) => setDateFin(e.target.value)} />
               </div>
+              {avertissementDate && (
+                <div className="field full"><div className="date-warning">⚠ {avertissementDate}</div></div>
+              )}
               <div className="field full" style={{ display: 'flex', justifyContent: 'flex-end' }}>
                 <button className="btn btn-primary" type="button" disabled={submitting} onClick={soumettre}>
-                  {submitting ? 'Envoi…' : 'Soumettre pour validation'}
+                  {submitting ? 'Envoi…' : "Déclarer l'activité"}
                 </button>
               </div>
             </div>
@@ -785,29 +1229,37 @@ function ActivitesHorsEquipe({ showToast, filtreAnnee, filtreSemestre }) {
         <div>
           <div className="card">
             <div className="card-head">
-              <div><h2>Mes demandes</h2><div className="hint">{loading ? 'Chargement…' : `${demandesFiltrees.length} demande${demandesFiltrees.length > 1 ? 's' : ''} sur la période sélectionnée`}</div></div>
+              <div><h2>Mes activités</h2><div className="hint">{loading ? 'Chargement…' : `${demandesFiltrees.length} activité${demandesFiltrees.length > 1 ? 's' : ''} sur la période sélectionnée`}</div></div>
             </div>
             <div className="list">
-              {demandesFiltrees.map((d) => {
-                const meta = demandeStatutMeta(d.statut)
-                return (
-                  <div className="list-item" key={d.id_demande}>
-                    <div className="body">
-                      <div className="title">{d.description}</div>
-                      <div className="desc">
-                        {d.statut === 'validee' && d.date_validation
-                          ? `Validée le ${formatDateShortFr(d.date_validation)}`
-                          : d.statut === 'refusee'
-                            ? 'Refusée'
-                            : relativeDays(d.date_reception)}
-                      </div>
+              {demandesFiltrees.map((d) => (
+                <div className="list-item" key={d.id_demande}>
+                  <div className="body">
+                    <div className="title">{d.titre}</div>
+                    <div className="desc">
+                      {d.equipes_noms ? `${d.equipes_noms} · ` : d.sous_equipe_nom ? `${d.sous_equipe_nom} · ` : d.up_nom ? `${d.up_nom} · ` : ''}{relativeDays(d.date_reception)}
                     </div>
-                    <span className={`badge ${meta.cls}`}>{meta.label}</span>
                   </div>
-                )
-              })}
+                  {estDemandeVerrouilleeParDelai(d) ? (
+                    <span className="badge validee" title="Le statut ne peut plus être modifié une heure après validation">
+                      Faite ✓ (verrouillée)
+                    </span>
+                  ) : (
+                    <select
+                      className="status-select"
+                      value={d.statut}
+                      disabled={savingId === d.id_demande}
+                      onChange={(e) => changerStatut(d.id_demande, e.target.value)}
+                    >
+                      {Object.entries(DEMANDE_STATUTS).map(([value, s]) => (
+                        <option key={value} value={value}>{s.label}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              ))}
               {!loading && demandesFiltrees.length === 0 && (
-                <div className="list-item"><div className="body"><div className="desc">Aucune demande sur cette période</div></div></div>
+                <div className="list-item"><div className="body"><div className="desc">Aucune activité sur cette période</div></div></div>
               )}
             </div>
           </div>
@@ -817,23 +1269,14 @@ function ActivitesHorsEquipe({ showToast, filtreAnnee, filtreSemestre }) {
   )
 }
 
-/* ================= VŒUX PÉDAGOGIQUES (questionnaire admin -> collaborateur) =================
-   Le questionnaire à 8 questions fixes envoyé par l'admin sur les préférences
-   de modules à enseigner. */
-const VP_Q = {
-  q1: 'Veuillez indiquer vos préférences quant aux modules que vous souhaitez enseigner',
-  q2: 'Souhaitez-vous enseigner les modules offerts dans le cadre de la formation en alternance ?',
-  q3: 'Si oui, veuillez choisir le(s) module(s)',
-  q4: 'Souhaitez-vous enseigner les modules offerts pour la classe internationale (enseignée en anglais) ?',
-  q5: 'Si oui, veuillez choisir le(s) module(s)',
-  q6: 'Souhaitez-vous avoir des heures supplémentaires ?',
-  q7: "Si oui, veuillez préciser le nombre d'heures",
-  q8: 'Souhaitez-vous mentionner autre chose ? (facultatif)',
-}
+/* ================= VŒUX PÉDAGOGIQUES (formulaire dynamique construit par l'admin) =================
+   L'admin crée un formulaire (questions + modules/classes) par campagne dans le tableau de
+   bord Admin ; le collaborateur répond ici, puis l'admin affecte les classes selon les
+   réponses (chaque classe affectée à un module disparaît ensuite du pool disponible). */
 
-function ModulePicker({ items, selected, onToggle, disabled, empty }) {
+function ModulePicker({ items, selected, onToggle, disabled, empty, labelFor }) {
   if (!items || items.length === 0) {
-    return <div className="hint">{empty || 'Aucun module proposé pour le moment.'}</div>
+    return <div className="hint">{empty || 'Aucune option proposée pour le moment.'}</div>
   }
   return (
     <div>
@@ -846,6 +1289,29 @@ function ModulePicker({ items, selected, onToggle, disabled, empty }) {
             onClick={() => !disabled && onToggle(m)}
             style={disabled ? { cursor: 'default', opacity: 0.75 } : undefined}
           >
+            <div className="left"><span className="rank">{isSelected ? '✓' : ''}</span>{labelFor ? labelFor(m) : m}</div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function SingleChoicePicker({ items, value, onChange, disabled, empty }) {
+  if (!items || items.length === 0) {
+    return <div className="hint">{empty || 'Aucune option proposée pour le moment.'}</div>
+  }
+  return (
+    <div>
+      {items.map((m) => {
+        const isSelected = value === m
+        return (
+          <div
+            key={m}
+            className={`vow-chip${isSelected ? ' selected' : ''}`}
+            onClick={() => !disabled && onChange(m)}
+            style={disabled ? { cursor: 'default', opacity: 0.75 } : undefined}
+          >
             <div className="left"><span className="rank">{isSelected ? '✓' : ''}</span>{m}</div>
           </div>
         )
@@ -854,38 +1320,66 @@ function ModulePicker({ items, selected, onToggle, disabled, empty }) {
   )
 }
 
-function OuiNonToggle({ value, onChange, disabled }) {
-  return (
-    <div style={{ display: 'flex', gap: 10 }}>
-      <button
-        type="button"
-        className={`btn ${value === 'oui' ? 'btn-primary' : 'btn-ghost'} btn-sm`}
+function estReponseVide(valeur) {
+  return valeur === undefined || valeur === null || valeur === '' || (Array.isArray(valeur) && valeur.length === 0)
+}
+
+function VoeuxQuestionField({ question, valeur, onChange, disabled, nomsModules, niveauxParModule }) {
+  if (question.type === 'texte') {
+    return (
+      <textarea
         disabled={disabled}
-        onClick={() => onChange('oui')}
-      >Oui</button>
-      <button
-        type="button"
-        className={`btn ${value === 'non' ? 'btn-primary' : 'btn-ghost'} btn-sm`}
+        value={valeur || ''}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Votre réponse…"
+      />
+    )
+  }
+  if (question.type === 'choix_unique') {
+    return <SingleChoicePicker items={question.options} value={valeur || ''} onChange={onChange} disabled={disabled} />
+  }
+  if (question.type === 'choix_multiple') {
+    const selection = Array.isArray(valeur) ? valeur : []
+    return (
+      <ModulePicker
+        items={question.options}
+        selected={selection}
+        onToggle={(v) => onChange(selection.includes(v) ? selection.filter((x) => x !== v) : [...selection, v])}
         disabled={disabled}
-        onClick={() => onChange('non')}
-      >Non</button>
-    </div>
-  )
+      />
+    )
+  }
+  if (question.type === 'modules') {
+    const selection = Array.isArray(valeur) ? valeur : []
+    return (
+      <ModulePicker
+        items={nomsModules}
+        selected={selection}
+        onToggle={(v) => onChange(selection.includes(v) ? selection.filter((x) => x !== v) : [...selection, v])}
+        disabled={disabled}
+        empty="Aucun module proposé pour le moment."
+        labelFor={(nom) => (niveauxParModule?.[nom] ? `${nom} — ${niveauxParModule[nom]}` : nom)}
+      />
+    )
+  }
+  return null
+}
+
+function VoeuxReponseAffichage({ valeur, niveauxParModule }) {
+  if (estReponseVide(valeur)) return <span className="reponse-empty">Aucune réponse</span>
+  if (Array.isArray(valeur)) {
+    return <>{valeur.map((v) => (
+      <span key={v} className="classe-chip">{niveauxParModule?.[v] ? `${v} — ${niveauxParModule[v]}` : v}</span>
+    ))}</>
+  }
+  return <span className="reponse-value">{String(valeur)}</span>
 }
 
 function VoeuxPedagogiquesCollab({ showToast, filtreAnnee, filtreSemestre }) {
   const [loading, setLoading] = useState(true)
   const [campagne, setCampagne] = useState(null)
   const [reponse, setReponse] = useState(null)
-  const [affectations, setAffectations] = useState([])
-  const [modulesSouhaites, setModulesSouhaites] = useState([])
-  const [alternance, setAlternance] = useState('')
-  const [modulesAlternance, setModulesAlternance] = useState([])
-  const [international, setInternational] = useState('')
-  const [modulesInternational, setModulesInternational] = useState([])
-  const [heuresSup, setHeuresSup] = useState('')
-  const [nbHeuresSup, setNbHeuresSup] = useState('')
-  const [commentaire, setCommentaire] = useState('')
+  const [valeurs, setValeurs] = useState({})
   const [saving, setSaving] = useState(false)
   // Le formulaire ne reste ouvert que tant qu'il n'y a pas encore de réponse
   // enregistrée ; une fois envoyé, on repasse en résumé (bouton "Modifier"
@@ -894,22 +1388,14 @@ function VoeuxPedagogiquesCollab({ showToast, filtreAnnee, filtreSemestre }) {
 
   const load = useCallback(() => {
     setLoading(true)
-    return Promise.all([getMonQuestionnaireVoeuxPedagogiques(), getMesAffectationsVoeuxPedagogiques().catch(() => [])])
-      .then(([data, mesAffectations]) => {
+    return getMonQuestionnaireVoeuxPedagogiques()
+      .then((data) => {
         const c = data?.campagne || null
         const r = data?.reponse || null
         setCampagne(c)
         setReponse(r)
         setEditing(!r)
-        setAffectations(Array.isArray(mesAffectations) ? mesAffectations : [])
-        setModulesSouhaites(r?.modules_souhaites || [])
-        setAlternance(r?.alternance || '')
-        setModulesAlternance(r?.modules_alternance || [])
-        setInternational(r?.international || '')
-        setModulesInternational(r?.modules_international || [])
-        setHeuresSup(r?.heures_sup || '')
-        setNbHeuresSup(r?.nb_heures_sup != null ? String(r.nb_heures_sup) : '')
-        setCommentaire(r?.commentaire || '')
+        setValeurs(r?.reponses_par_question || {})
       })
       .catch((err) => { console.error(err); showToast?.('Erreur lors du chargement du questionnaire') })
       .finally(() => setLoading(false))
@@ -917,32 +1403,31 @@ function VoeuxPedagogiquesCollab({ showToast, filtreAnnee, filtreSemestre }) {
 
   useEffect(() => { load() }, [load])
 
-  const toggleIn = (setter) => (value) => (
-    setter((prev) => (prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]))
-  )
+  const setValeur = (idQuestion, v) => setValeurs((prev) => ({ ...prev, [idQuestion]: v }))
+
+  // Verrouillage 24h après le premier envoi — au-delà, l'admin peut affecter
+  // les collaborateurs sans qu'ils continuent à modifier leurs réponses.
+  const heuresDepuisEnvoi = reponse?.date_soumission
+    ? (Date.now() - new Date(reponse.date_soumission).getTime()) / 36e5
+    : null
+  const reponsesVerrouillees = heuresDepuisEnvoi !== null && heuresDepuisEnvoi >= 24
+  // Date/heure exacte au-delà de laquelle les réponses seront verrouillées —
+  // affichée à l'avance pour prévenir le collaborateur, avant même le verrouillage.
+  const dateLimiteModif = reponse?.date_soumission
+    ? new Date(new Date(reponse.date_soumission).getTime() + 24 * 3600 * 1000)
+    : null
 
   const submit = () => {
     if (!campagne) return
     if (reponsesVerrouillees) { showToast?.('Vos réponses sont verrouillées 24h après leur envoi et ne sont plus modifiables'); return }
-    if (!alternance) { showToast?.("Merci de répondre à la question sur l'alternance"); return }
-    if (!international) { showToast?.('Merci de répondre à la question sur la classe internationale'); return }
-    if (!heuresSup) { showToast?.('Merci de répondre à la question sur les heures supplémentaires'); return }
-    if (heuresSup === 'oui' && (!nbHeuresSup || Number(nbHeuresSup) <= 0)) {
-      showToast?.("Merci de préciser un nombre d'heures supplémentaires valide")
-      return
+    for (const q of campagne.questions) {
+      if (q.obligatoire && estReponseVide(valeurs[q.id_question])) {
+        showToast?.(`Merci de répondre à : "${q.intitule}"`)
+        return
+      }
     }
     setSaving(true)
-    saveMaReponseVoeuxPedagogiques({
-      id_campagne: campagne.id_campagne,
-      modules_souhaites: modulesSouhaites,
-      alternance,
-      modules_alternance: alternance === 'oui' ? modulesAlternance : [],
-      international,
-      modules_international: international === 'oui' ? modulesInternational : [],
-      heures_sup: heuresSup,
-      nb_heures_sup: heuresSup === 'oui' ? Number(nbHeuresSup) : null,
-      commentaire,
-    })
+    saveMaReponseVoeuxPedagogiques({ id_campagne: campagne.id_campagne, reponses: valeurs })
       .then(() => { showToast?.('Réponses enregistrées ✓'); load() })
       .catch((err) => { console.error(err); showToast?.(err.response?.data?.message || "Erreur lors de l'enregistrement") })
       .finally(() => setSaving(false))
@@ -957,115 +1442,25 @@ function VoeuxPedagogiquesCollab({ showToast, filtreAnnee, filtreSemestre }) {
     )
   }
 
-  const VP_TYPE_LABELS = {
-    normal: 'Cours normal',
-    alternance: 'Alternance',
-    international: 'Classe internationale',
-    autre: 'Autre',
-  }
-
-  // Les réponses sont verrouillées 24h après leur premier envoi (date_soumission ne
-  // change plus ensuite, seule date_modification bouge) : passé ce délai, l'admin doit
-  // pouvoir affecter les collaborateurs sans qu'ils continuent à changer leurs réponses.
-  const heuresDepuisEnvoi = reponse?.date_soumission
-    ? (Date.now() - new Date(reponse.date_soumission).getTime()) / 36e5
-    : null
-  const reponsesVerrouillees = heuresDepuisEnvoi !== null && heuresDepuisEnvoi >= 24
-
-  // Si le niveau n'a pas été enregistré séparément, on le retrouve dans le nom
-  // du module (format "Module[Niveau]" tel que configuré par l'admin).
-  const niveauAffichage = (a) => {
-    if (a.niveau) return a.niveau
-    const m = /^(.*)\[(.+)\]\s*$/.exec(a.module || '')
-    return m ? m[2].trim() : '—'
-  }
-
-  const VP_TYPE_BADGE = {
-    normal: 'vp-normal',
-    alternance: 'vp-alternance',
-    international: 'vp-international',
-    autre: 'vp-autre',
-  }
-
-  // Comme les activités école, chaque affectation est rattachée à une période via sa
-  // date d'affectation — filtrée sur le sélecteur Année/Semestre en haut de page.
-  const affectationsFiltrees = affectations.filter((a) => estDansPeriode(a.date_affectation, filtreAnnee, filtreSemestre))
-
-  const affectationsParType = affectationsFiltrees.reduce((acc, a) => {
-    acc[a.type] = (acc[a.type] || 0) + 1
-    return acc
-  }, {})
-
-  const affectationsCard = affectations.length > 0 && (
-    <div className="card affectations-card">
-      <div className="card-head">
-        <div>
-          <h2>Mes affectations</h2>
-          <div className="hint">
-            {affectationsFiltrees.length} affectation{affectationsFiltrees.length > 1 ? 's' : ''} sur la période sélectionnée
-          </div>
-        </div>
-        <div className="affectations-summary">
-          {Object.entries(affectationsParType).map(([type, count]) => (
-            <span key={type} className={`badge ${VP_TYPE_BADGE[type] || 'vp-autre'}`}>
-              {count} · {VP_TYPE_LABELS[type] || type}
-            </span>
-          ))}
-        </div>
-      </div>
-      <div style={{ overflowX: 'auto' }}>
-        <table>
-          <thead>
-            <tr>
-              <th>Module</th>
-              <th>Type</th>
-              <th>Niveau</th>
-              <th>Classes</th>
-            </tr>
-          </thead>
-          <tbody>
-            {affectationsFiltrees.map((a) => (
-              <tr key={a.id_affectation}>
-                <td>
-                  <div className="module-cell">
-                    <span className="module-dot" aria-hidden="true">{(a.module || '?').trim().charAt(0).toUpperCase()}</span>
-                    <span className="module-name">{(a.module || '').replace(/\s*\[.+\]\s*$/, '')}</span>
-                  </div>
-                </td>
-                <td><span className={`badge ${VP_TYPE_BADGE[a.type] || 'vp-autre'}`}>{VP_TYPE_LABELS[a.type] || a.type || '—'}</span></td>
-                <td>{niveauAffichage(a)}</td>
-                <td>
-                  {(a.classes || []).length > 0
-                    ? (a.classes || []).map((c) => <span key={c} className="classe-chip">{c}</span>)
-                    : '—'}
-                </td>
-              </tr>
-            ))}
-            {affectationsFiltrees.length === 0 && (
-              <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--text-faint)' }}>Aucune affectation sur cette période</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )
-
   if (!campagne) {
     return (
-      <>
-        <div className="page-head">
-          <h2>Vœux pédagogiques</h2>
-          <p>Aucun questionnaire n'est ouvert pour le moment. Revenez plus tard.</p>
-        </div>
-        {affectationsCard}
-      </>
+      <div className="page-head">
+        <h2>Vœux pédagogiques</h2>
+        <p>Aucun questionnaire n'est ouvert pour le moment. Revenez plus tard.</p>
+      </div>
     )
   }
+
+  const questionsTriees = [...(campagne.questions || [])].sort((a, b) => a.ordre - b.ordre)
+  const modulesParQuestion = (idQuestion) => (campagne.modules || []).filter((m) => m.id_question === idQuestion)
+  const nomsModulesParQuestion = (idQuestion) => modulesParQuestion(idQuestion).map((m) => m.nom)
+  const niveauxParModuleParQuestion = (idQuestion) =>
+    Object.fromEntries(modulesParQuestion(idQuestion).map((m) => [m.nom, m.niveau]))
 
   return (
     <>
       <div className="page-head">
-        <h2>Vœux pédagogiques</h2>
+        <h2>{campagne.titre || 'Vœux pédagogiques'}</h2>
         <p>
           {reponse
             ? (editing
@@ -1073,8 +1468,13 @@ function VoeuxPedagogiquesCollab({ showToast, filtreAnnee, filtreSemestre }) {
               : (reponsesVerrouillees
                 ? 'Vos réponses ont bien été envoyées et sont désormais verrouillées.'
                 : 'Vos réponses ont bien été envoyées.'))
-            : 'Répondez aux questions ci-dessous. Vous pourrez modifier vos réponses tant que le questionnaire reste ouvert.'}
+            : 'Répondez aux questions ci-dessous. Vous aurez 24h après l\'envoi pour les modifier, ensuite elles seront verrouillées.'}
         </p>
+        {reponse && !reponsesVerrouillees && dateLimiteModif && (
+          <p style={{ color: 'var(--text-faint)', fontSize: 12.5, marginTop: 4 }}>
+            ⏳ Modifiable jusqu'au {formatDateHeureShortFr(dateLimiteModif)} — passé ce délai, vos réponses seront verrouillées.
+          </p>
+        )}
         {campagne.date_creation && !estDansPeriode(campagne.date_creation, filtreAnnee, filtreSemestre) && (
           <p style={{ color: 'var(--amber, #B45309)', fontSize: 12.5, marginTop: 4 }}>
             Ce questionnaire a été créé hors de la période sélectionnée ({filtreAnnee} · {filtreSemestre === 'S1' ? 'Semestre 1' : 'Semestre 2'}) — il reste affiché car c'est le questionnaire actuellement ouvert.
@@ -1082,58 +1482,29 @@ function VoeuxPedagogiquesCollab({ showToast, filtreAnnee, filtreSemestre }) {
         )}
       </div>
 
-      {affectationsCard}
-
       {reponse && !editing && (
         <div className="card">
-          <div className="card-head"><div><h2>Mes réponses</h2><div className="hint">{reponsesVerrouillees ? 'Envoyées — verrouillées 24h après l\'envoi, elles ne sont plus modifiables.' : 'Envoyées — vous pouvez encore les modifier tant que le questionnaire reste ouvert.'}</div></div></div>
+          <div className="card-head"><div><h2>Mes réponses</h2><div className="hint">{reponsesVerrouillees ? 'Envoyées — verrouillées 24h après l\'envoi, elles ne sont plus modifiables.' : `Envoyées — modifiables jusqu'au ${formatDateHeureShortFr(dateLimiteModif)}.`}</div></div></div>
           <div className="reponses-grid">
-            <div className="reponse-item full">
-              <div className="reponse-label">Q1 — Modules souhaités</div>
-              <div className="reponse-value">
-                {modulesSouhaites.length > 0
-                  ? modulesSouhaites.map((m) => <span key={m} className="classe-chip">{m}</span>)
-                  : <span className="reponse-empty">Aucun</span>}
+            {questionsTriees.map((q) => (
+              <div key={q.id_question} className={`reponse-item${q.type === 'texte' ? ' full' : ''}`}>
+                <div className="reponse-label">{q.intitule}</div>
+                <div className="reponse-value"><VoeuxReponseAffichage valeur={valeurs[q.id_question]} niveauxParModule={q.type === 'modules' ? niveauxParModuleParQuestion(q.id_question) : undefined} /></div>
               </div>
-            </div>
-            <div className="reponse-item">
-              <div className="reponse-label">Q2 — Alternance</div>
-              <div className="reponse-value">
-                <span className={`pill-ouinon ${alternance === 'oui' ? 'oui' : 'non'}`}>{alternance === 'oui' ? 'Oui' : 'Non'}</span>
-                {alternance === 'oui' && modulesAlternance.length > 0 && (
-                  <div className="reponse-detail">{modulesAlternance.join(', ')}</div>
-                )}
-              </div>
-            </div>
-            <div className="reponse-item">
-              <div className="reponse-label">Q4 — Classe internationale</div>
-              <div className="reponse-value">
-                <span className={`pill-ouinon ${international === 'oui' ? 'oui' : 'non'}`}>{international === 'oui' ? 'Oui' : 'Non'}</span>
-                {international === 'oui' && modulesInternational.length > 0 && (
-                  <div className="reponse-detail">{modulesInternational.join(', ')}</div>
-                )}
-              </div>
-            </div>
-            <div className="reponse-item">
-              <div className="reponse-label">Q6 — Heures supplémentaires</div>
-              <div className="reponse-value">
-                <span className={`pill-ouinon ${heuresSup === 'oui' ? 'oui' : 'non'}`}>{heuresSup === 'oui' ? `Oui — ${nbHeuresSup}h` : 'Non'}</span>
-              </div>
-            </div>
-            {commentaire && (
-              <div className="reponse-item full">
-                <div className="reponse-label">Q8 — Autre chose</div>
-                <div className="reponse-value reponse-comment">{commentaire}</div>
-              </div>
-            )}
+            ))}
           </div>
-          <div style={{ padding: '4px 20px 18px' }}>
+          <div style={{ padding: '4px 20px 18px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
             {reponsesVerrouillees ? (
               <span style={{ color: 'var(--text-faint)', fontSize: 12.5 }}>
                 Envoyées le {formatDateShortFr(reponse.date_soumission)} — verrouillées depuis, non modifiables.
               </span>
             ) : (
-              <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(true)}>Modifier mes réponses</button>
+              <>
+                <button type="button" className="btn btn-ghost btn-sm" onClick={() => setEditing(true)}>Modifier mes réponses</button>
+                <span style={{ color: 'var(--text-faint)', fontSize: 12.5 }}>
+                  ⏳ Modifiable jusqu'au {formatDateHeureShortFr(dateLimiteModif)}
+                </span>
+              </>
             )}
           </div>
         </div>
@@ -1141,54 +1512,24 @@ function VoeuxPedagogiquesCollab({ showToast, filtreAnnee, filtreSemestre }) {
 
       {editing && (
         <>
-          <div className="card">
-            <div className="card-head"><div><h2>Q1 — Modules souhaités</h2><div className="hint">{VP_Q.q1}</div></div></div>
-            <div style={{ padding: '0 20px 16px' }}>
-              <ModulePicker items={campagne.choix_modules} selected={modulesSouhaites} onToggle={toggleIn(setModulesSouhaites)} />
+          {questionsTriees.length === 0 && (
+            <div className="card"><div style={{ padding: 20 }} className="hint">Ce formulaire ne contient aucune question pour le moment.</div></div>
+          )}
+          {questionsTriees.map((q) => (
+            <div className="card" key={q.id_question}>
+              <div className="card-head"><div><h2>{q.intitule}{q.obligatoire && <span style={{ color: 'var(--red)' }}> *</span>}</h2></div></div>
+              <div style={{ padding: '0 20px 16px' }}>
+                <VoeuxQuestionField
+                  question={q}
+                  valeur={valeurs[q.id_question]}
+                  onChange={(v) => setValeur(q.id_question, v)}
+                  disabled={reponsesVerrouillees}
+                  nomsModules={nomsModulesParQuestion(q.id_question)}
+                  niveauxParModule={niveauxParModuleParQuestion(q.id_question)}
+                />
+              </div>
             </div>
-          </div>
-
-          <div className="card">
-            <div className="card-head"><div><h2>Q2 — Alternance</h2><div className="hint">{VP_Q.q2}</div></div></div>
-            <div style={{ padding: '0 20px 16px' }}><OuiNonToggle value={alternance} onChange={(v) => { setAlternance(v); if (v === 'non') setModulesAlternance([]) }} /></div>
-            {alternance === 'oui' && (
-              <div style={{ padding: '0 20px 16px', borderTop: '1px solid var(--border)' }}>
-                <div className="hint" style={{ margin: '14px 0 8px' }}>Q3 — {VP_Q.q3}</div>
-                <ModulePicker items={campagne.choix_modules_alternance} selected={modulesAlternance} onToggle={toggleIn(setModulesAlternance)} empty="Aucun module d'alternance proposé pour le moment." />
-              </div>
-            )}
-          </div>
-
-          <div className="card">
-            <div className="card-head"><div><h2>Q4 — Classe internationale</h2><div className="hint">{VP_Q.q4}</div></div></div>
-            <div style={{ padding: '0 20px 16px' }}><OuiNonToggle value={international} onChange={(v) => { setInternational(v); if (v === 'non') setModulesInternational([]) }} /></div>
-            {international === 'oui' && (
-              <div style={{ padding: '0 20px 16px', borderTop: '1px solid var(--border)' }}>
-                <div className="hint" style={{ margin: '14px 0 8px' }}>Q5 — {VP_Q.q5}</div>
-                <ModulePicker items={campagne.choix_modules_international} selected={modulesInternational} onToggle={toggleIn(setModulesInternational)} empty="Aucun module international proposé pour le moment." />
-              </div>
-            )}
-          </div>
-
-          <div className="card">
-            <div className="card-head"><div><h2>Q6 — Heures supplémentaires</h2><div className="hint">{VP_Q.q6}</div></div></div>
-            <div style={{ padding: '0 20px 16px' }}><OuiNonToggle value={heuresSup} onChange={(v) => { setHeuresSup(v); if (v === 'non') setNbHeuresSup('') }} /></div>
-            {heuresSup === 'oui' && (
-              <div style={{ padding: '0 20px 16px', borderTop: '1px solid var(--border)' }}>
-                <div className="field" style={{ maxWidth: 220, marginTop: 14 }}>
-                  <label>Q7 — {VP_Q.q7}</label>
-                  <input type="number" min="1" value={nbHeuresSup} onChange={(e) => setNbHeuresSup(e.target.value)} placeholder="Nombre d'heures" />
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="card">
-            <div className="card-head"><div><h2>Q8 — Autre chose ?</h2><div className="hint">{VP_Q.q8}</div></div></div>
-            <div className="field full" style={{ padding: '0 20px 16px' }}>
-              <textarea value={commentaire} onChange={(e) => setCommentaire(e.target.value)} placeholder="Facultatif…" />
-            </div>
-          </div>
+          ))}
 
           <div className="card">
             <div style={{ padding: 16, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
@@ -1200,6 +1541,89 @@ function VoeuxPedagogiquesCollab({ showToast, filtreAnnee, filtreSemestre }) {
           </div>
         </>
       )}
+    </>
+  )
+}
+
+/* ================= CLASSES AFFECTÉES (page dédiée : une ligne par module, toutes ses
+   classes affectées regroupées en puces — alimentée par les mêmes affectations que
+   l'onglet Affectation du builder admin, voir getMesAffectationsVoeuxPedagogiques) ================= */
+function ClassesAffectees({ showToast, filtreAnnee, filtreSemestre }) {
+  const [affectations, setAffectations] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    getMesAffectationsVoeuxPedagogiques()
+      .then((data) => setAffectations(Array.isArray(data) ? data : []))
+      .catch((err) => { console.error(err); showToast?.('Erreur lors du chargement des classes affectées') })
+      .finally(() => setLoading(false))
+  }, [showToast])
+
+  // Comme les activités école, chaque affectation est rattachée à une période via sa
+  // date d'affectation — filtrée sur le sélecteur Année/Semestre en haut de page.
+  const affectationsFiltrees = affectations.filter((a) => estDansPeriode(a.date_affectation, filtreAnnee, filtreSemestre))
+
+  // Regroupées par module + niveau : une ligne par module avec toutes ses classes.
+  const parModule = {}
+  affectationsFiltrees.forEach((a) => {
+    const cle = `${a.module}::${a.niveau || ''}`
+    if (!parModule[cle]) parModule[cle] = { module: a.module, niveau: a.niveau, classes: [] }
+    parModule[cle].classes.push(a.classe)
+  })
+  const lignes = Object.values(parModule).sort((a, b) => (a.module || '').localeCompare(b.module || ''))
+
+  return (
+    <>
+      <div className="page-head">
+        <h2>Classes affectées</h2>
+        <p>Les classes qui vous ont été affectées suite à vos vœux pédagogiques.</p>
+      </div>
+      <div className="card affectations-card">
+        <div className="card-head">
+          <div>
+            <h2>Mes affectations</h2>
+            <div className="hint">
+              {affectationsFiltrees.length} affectation{affectationsFiltrees.length > 1 ? 's' : ''}
+            </div>
+          </div>
+        </div>
+        {loading && <div className="hint" style={{ padding: 20 }}>Chargement…</div>}
+        {!loading && (
+          <div style={{ overflowX: 'auto' }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>Module</th>
+                  <th>Niveau</th>
+                  <th>Classes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {lignes.map((l) => (
+                  <tr key={`${l.module}::${l.niveau}`}>
+                    <td>
+                      <div className="module-cell">
+                        <span className="module-dot" aria-hidden="true">{(l.module || '?').trim().charAt(0).toUpperCase()}</span>
+                        <span className="module-name">{l.module}</span>
+                      </div>
+                    </td>
+                    <td>{l.niveau || '—'}</td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                        {l.classes.map((c) => <span key={c} className="classe-chip">{c}</span>)}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {lignes.length === 0 && (
+                  <tr><td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-faint)' }}>Aucune classe affectée sur cette période</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </>
   )
 }
@@ -1306,6 +1730,21 @@ function MonProfil({ user, showToast, dark, onToggleDark, updateUser, filtreAnne
   }
 
   const scores = profil?.mes_scores || []
+  const historique = profil?.historique_scores || []
+
+  // Pivote les lignes plates (une par équipe × période) en une ligne par période,
+  // une colonne par équipe — format attendu par le LineChart recharts ci-dessous.
+  const HISTORIQUE_COULEURS = ['#E4032E', '#0d1b6b', '#2196f3', '#f5a623', '#8bc34a']
+  const equipesHistorique = []
+  const periodesMap = {}
+  historique.forEach((h) => {
+    const nomEquipe = h.equipe_nom || 'Équipe'
+    if (!equipesHistorique.includes(nomEquipe)) equipesHistorique.push(nomEquipe)
+    const label = `${h.semestre === 'S1' ? 'S1' : 'S2'} ${h.annee_universitaire}`
+    if (!periodesMap[label]) periodesMap[label] = { periode: label }
+    periodesMap[label][nomEquipe] = Number(h.score)
+  })
+  const historiqueData = Object.values(periodesMap)
 
   return (
     <>
@@ -1375,6 +1814,40 @@ function MonProfil({ user, showToast, dark, onToggleDark, updateUser, filtreAnne
 
           <div className="card">
             <div className="card-head">
+              <div><h2>Historique</h2><div className="hint">Évolution de votre score, toutes périodes confondues</div></div>
+            </div>
+            {historiqueData.length < 2 ? (
+              <div style={{ padding: '0 20px 16px', color: 'var(--text-faint)', fontSize: 12.5 }}>
+                Pas encore assez de périodes évaluées pour afficher une évolution.
+              </div>
+            ) : (
+              <div style={{ padding: '0 20px 20px', height: 240 }}>
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={historiqueData} margin={{ top: 8, right: 12, left: -18, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="periode" tick={{ fontSize: 11 }} />
+                    <YAxis domain={[0, 20]} tick={{ fontSize: 11 }} />
+                    <Tooltip />
+                    {equipesHistorique.length > 1 && <Legend wrapperStyle={{ fontSize: 12 }} />}
+                    {equipesHistorique.map((nom, i) => (
+                      <Line
+                        key={nom}
+                        type="monotone"
+                        dataKey={nom}
+                        stroke={HISTORIQUE_COULEURS[i % HISTORIQUE_COULEURS.length]}
+                        strokeWidth={2}
+                        connectNulls
+                        dot={{ r: 3 }}
+                      />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+
+          <div className="card">
+            <div className="card-head">
               <div><h2>Mot de passe</h2><div className="hint">Modifiez votre mot de passe de connexion</div></div>
               {!editingPassword && (
                 <button className="btn btn-ghost btn-sm" type="button" onClick={() => setEditingPassword(true)}>Modifier</button>
@@ -1417,30 +1890,6 @@ function MonProfil({ user, showToast, dark, onToggleDark, updateUser, filtreAnne
           <div className="card">
             <div className="card-head"><div><h2>Préférences du compte</h2></div></div>
             <div className="toggle-row">
-              <div><div className="t">Notifications par email</div><div className="d">Rappels de deadline</div></div>
-              <label className="switch">
-                <input
-                  type="checkbox"
-                  checked={!!profil?.notifications_email}
-                  disabled={loading || savingPref !== null}
-                  onChange={() => togglePref('notifications_email')}
-                />
-                <span className="slider"></span>
-              </label>
-            </div>
-            <div className="toggle-row">
-              <div><div className="t">Visibilité du profil</div><div className="d">Visible par les responsables de sous-équipe</div></div>
-              <label className="switch">
-                <input
-                  type="checkbox"
-                  checked={!!profil?.profil_visible}
-                  disabled={loading || savingPref !== null}
-                  onChange={() => togglePref('profil_visible')}
-                />
-                <span className="slider"></span>
-              </label>
-            </div>
-            <div className="toggle-row">
               <div><div className="t">Mode sombre</div><div className="d">Adapte l'interface pour une utilisation en faible luminosité</div></div>
               <label className="switch">
                 <input type="checkbox" checked={!!dark} onChange={onToggleDark} />
@@ -1455,7 +1904,7 @@ function MonProfil({ user, showToast, dark, onToggleDark, updateUser, filtreAnne
 }
 
 /* ================= MON ACTIVITÉ ÉCOLE (collaborateur) ================= */
-function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre }) {
+function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre, anneesOptions }) {
   const [loading, setLoading] = useState(true)
   const [detail, setDetail] = useState({
     expertises: [], encadrements: [],
@@ -1476,6 +1925,14 @@ function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre }) {
 
   useEffect(() => { refresh() }, [refresh])
 
+  // Met en surbrillance la ligne/puce qui vient d'être ajoutée (quelques secondes),
+  // pour que l'ajout se voie clairement dans la liste sans avoir à actualiser la page.
+  const [recentlyAddedId, setRecentlyAddedId] = useState(null)
+  const flashRecentlyAdded = (id) => {
+    setRecentlyAddedId(id)
+    setTimeout(() => setRecentlyAddedId((current) => (current === id ? null : current)), 3000)
+  }
+
   /* ---------- Expertises ---------- */
   const [expertiseInput, setExpertiseInput] = useState('')
   const [savingExpertise, setSavingExpertise] = useState(false)
@@ -1484,9 +1941,10 @@ function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre }) {
     if (!expertiseInput.trim()) return
     setSavingExpertise(true)
     try {
-      await addMonExpertise(expertiseInput.trim())
+      const created = await addMonExpertise(expertiseInput.trim())
       setExpertiseInput('')
       await refresh()
+      if (created?.id_expertise) flashRecentlyAdded(created.id_expertise)
       showToast('Expertise ajoutée ✓')
       setOpenForm(null)
     } catch (err) {
@@ -1519,7 +1977,7 @@ function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre }) {
     if (!encNom.trim()) { showToast("Le nom de l'étudiant est requis"); return }
     setSavingEnc(true)
     try {
-      await addMonEncadrement({
+      const created = await addMonEncadrement({
         nom_etudiant: encNom.trim(),
         sujet: encSujet.trim() || null,
         type: encType,
@@ -1527,6 +1985,7 @@ function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre }) {
       })
       setEncNom(''); setEncSujet(''); setEncAnnee('')
       await refresh()
+      if (created?.id_encadrement) flashRecentlyAdded(created.id_encadrement)
       showToast('Encadrement ajouté ✓')
       setOpenForm(null)
     } catch (err) {
@@ -1563,7 +2022,7 @@ function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre }) {
     if (!form.titre.trim()) { showToast('Le titre est requis'); return }
     setSavingActivite(type)
     try {
-      await addMonActiviteAcademique({
+      const created = await addMonActiviteAcademique({
         type,
         titre: form.titre.trim(),
         role: type === 'evenement' ? (form.role.trim() || null) : null,
@@ -1571,6 +2030,7 @@ function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre }) {
       })
       setActiviteForms((prev) => ({ ...prev, [type]: { titre: '', role: '', date_activite: '' } }))
       await refresh()
+      if (created?.id_activite) flashRecentlyAdded(created.id_activite)
       showToast('Activité ajoutée ✓')
       setOpenForm(null)
     } catch (err) {
@@ -1622,7 +2082,7 @@ function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre }) {
             ) : (
               <div className="ae-chip-list">
                 {detail.expertises.map((e) => (
-                  <span key={e.id_expertise} className="ae-chip amber">
+                  <span key={e.id_expertise} className={`ae-chip amber${recentlyAddedId === e.id_expertise ? ' ae-item-new' : ''}`}>
                     {e.libelle}
                     <button type="button" onClick={() => removeExpertiseItem(e.id_expertise)} title="Retirer"><Icon.removeX /></button>
                   </span>
@@ -1644,7 +2104,7 @@ function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre }) {
             ) : (
               <div className="ae-list">
                 {encadrementsFiltres.map((enc) => (
-                  <div key={enc.id_encadrement} className="ae-row">
+                  <div key={enc.id_encadrement} className={`ae-row${recentlyAddedId === enc.id_encadrement ? ' ae-item-new' : ''}`}>
                     <div className="ae-row-main">
                       <div className="ae-avatar">{initials(enc.nom_etudiant)}</div>
                       <div>
@@ -1682,7 +2142,7 @@ function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre }) {
                 ) : (
                   <div className="ae-list">
                     {list.map((a) => (
-                      <div key={a.id_activite} className="ae-row">
+                      <div key={a.id_activite} className={`ae-row${recentlyAddedId === a.id_activite ? ' ae-item-new' : ''}`}>
                         <div className="ae-row-main">
                           <div className="title">{a.titre}</div>
                           {type === 'evenement' && a.role && <span className="ae-date-chip">{a.role}</span>}
@@ -1754,7 +2214,7 @@ function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre }) {
                   <label>Année universitaire</label>
                   <select value={encAnnee} onChange={(e) => setEncAnnee(e.target.value)}>
                     <option value="">— Non renseignée —</option>
-                    {ANNEE_OPTIONS.map((a) => <option key={a} value={a}>{a}</option>)}
+                    {anneesOptions.map((a) => <option key={a} value={a}>{a}</option>)}
                   </select>
                 </div>
                 <div className="field full" style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
@@ -1906,12 +2366,20 @@ function ActiviteEcoleTousLesCollegues({ showToast, filtreAnnee, filtreSemestre,
   const [selected, setSelected] = useState(null)
   const [categoryModal, setCategoryModal] = useState(null) // { title, items }
 
-  useEffect(() => {
+  const refresh = useCallback(() => (
     getProfesseurs()
       .then((data) => setProfesseurs(Array.isArray(data) ? data : []))
       .catch((err) => { console.error(err); showToast('Erreur lors du chargement de votre activité école') })
       .finally(() => setLoading(false))
-  }, [showToast])
+  ), [showToast])
+
+  useEffect(() => { refresh() }, [refresh])
+
+  // Rafraîchissement périodique — sans recharger la page.
+  useEffect(() => {
+    const id = setInterval(refresh, 20000)
+    return () => clearInterval(id)
+  }, [refresh])
 
   const filtered = professeurs.filter((p) => String(p.id) === String(currentUserId))
   // Les colonnes jury/formation/événements/comités sont filtrées sur la période

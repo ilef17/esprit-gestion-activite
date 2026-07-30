@@ -250,6 +250,35 @@ export async function getGrilleNotes(teamId, type = 'up') {
   return { criteres, grille, annee_universitaire, semestre }
 }
 
+// "Appliquer" recalcule désormais le score de TOUS les collaborateurs du
+// système en une fois (le filtre équipe de la page Évaluation ne sert plus
+// qu'à consulter les scores d'une équipe donnée, plus à restreindre le calcul).
+// On boucle sur chaque sous-équipe (UP) puis chaque équipe hors UP et on
+// applique calculerScoresEquipe à chacune, sans note manuelle (voir plus haut :
+// un critère personnalisé non noté compte simplement pour 0).
+export async function calculerScoresPourTous(periodeOverride = {}) {
+  const [sousEquipes] = await pool.query('SELECT id_sous_equipe AS id FROM sous_equipe')
+  const [equipesHorsUp] = await pool.query('SELECT id_up AS id FROM equipe_hors_up')
+  const resultats = []
+  for (const { id } of sousEquipes) {
+    try {
+      const r = await calculerScoresEquipe(id, {}, 'up', periodeOverride)
+      resultats.push({ type: 'up', id, count: r.length })
+    } catch (err) {
+      resultats.push({ type: 'up', id, error: err.message })
+    }
+  }
+  for (const { id } of equipesHorsUp) {
+    try {
+      const r = await calculerScoresEquipe(id, {}, 'hors_up', periodeOverride)
+      resultats.push({ type: 'hors_up', id, count: r.length })
+    } catch (err) {
+      resultats.push({ type: 'hors_up', id, error: err.message })
+    }
+  }
+  return resultats
+}
+
 export async function calculerScoresEquipe(teamId, notesOverride = {}, type = 'up', periodeOverride = {}) {
   const membres = await getMembres(teamId, type)
   // Priorité à la période sélectionnée dans le tableau de bord au moment du calcul
@@ -296,21 +325,18 @@ export async function calculerScoresEquipe(teamId, notesOverride = {}, type = 'u
         // éventuel override est ignoré (il n'y a pas de notation manuelle possible).
         note = Math.round(suggestions[critere.code] * 20 * 100) / 100
       } else if (Number(critere.ponderation) > 0) {
-        // Critère personnalisé qui compte réellement dans le score : note manuelle
-        // obligatoire, plafonnée, avec justification écrite obligatoire — voir les
-        // constantes PLAFOND_NOTE_MANUELLE / JUSTIFICATION_MIN_LENGTH en tête de fichier.
+        // Critère personnalisé qui compte dans le score : la notation manuelle a été
+        // retirée de l'interface — si aucune note n'est fournie (l'appel "Appliquer à
+        // tous" n'en envoie jamais), le critère compte pour 0 plutôt que de bloquer le
+        // calcul de toute l'équipe.
         const provided = overrides[critere.id_critere]
         const noteFournie = provided?.note
         if (noteFournie === undefined || noteFournie === null || noteFournie === '') {
-          throw new Error(`Note manquante pour le critère personnalisé "${critere.nom}" (${membre.nom}).`)
+          note = 0
+        } else {
+          justification = String(provided?.justification || '').trim()
+          note = Math.max(0, Math.min(PLAFOND_NOTE_MANUELLE, Number(noteFournie)))
         }
-        justification = String(provided?.justification || '').trim()
-        if (justification.length < JUSTIFICATION_MIN_LENGTH) {
-          throw new Error(
-            `Justification requise (au moins ${JUSTIFICATION_MIN_LENGTH} caractères) pour la note de "${critere.nom}" (${membre.nom}).`
-          )
-        }
-        note = Math.max(0, Math.min(PLAFOND_NOTE_MANUELLE, Number(noteFournie)))
       } else {
         // Critère personnalisé à pondération 0 : n'affecte pas le score, pas besoin
         // d'imposer une note/justification tant qu'il n'est pas réellement activé.
@@ -396,4 +422,36 @@ export async function getMesScores(idCollaborateur, anneeUniversitaire, semestre
     [idCollaborateur, idCollaborateur]
   )
   return rows
+}
+
+// Historique complet des scores d'un collaborateur, toutes équipes et toutes
+// périodes confondues, trié chronologiquement — alimente la vue "Historique"
+// de la page "Mon profil" (évolution du score dans le temps, contrairement à
+// getMesScores() ci-dessus qui ne renvoie qu'une période à la fois).
+export async function getHistoriqueScores(idCollaborateur) {
+  const [rows] = await pool.query(
+    `SELECT
+      es.id_score, es.type_equipe, es.annee_universitaire, es.semestre, es.score, es.date_calcul,
+      CASE WHEN es.type_equipe = 'hors_up'
+        THEN (SELECT nom_up FROM equipe_hors_up WHERE id_up = es.id_up)
+        ELSE (SELECT nom FROM sous_equipe WHERE id_sous_equipe = es.id_sous_equipe)
+      END AS equipe_nom
+    FROM evaluation_score es
+    WHERE es.id_collaborateur = ?
+    ORDER BY es.annee_universitaire ASC, es.semestre ASC, es.date_calcul ASC`,
+    [idCollaborateur]
+  )
+  return rows
+}
+
+// Utilisé quand un collaborateur est retiré d'une sous-équipe ou d'une équipe hors UP :
+// ses scores d'évaluation calculés pour CETTE équipe n'ont plus de sens (il n'en fait
+// plus partie), ils sont donc supprimés — voir sousEquipes.controller.js et
+// equipeHorsUp.controller.js -> removeMembre.
+export async function deleteScoresCollaborateurEquipe(idCollaborateur, teamId, type = 'up') {
+  const cfg = teamConfig(type)
+  await pool.query(
+    `DELETE FROM evaluation_score WHERE id_collaborateur = ? AND type_equipe = ? AND ${cfg.idCol} = ?`,
+    [idCollaborateur, type, teamId]
+  )
 }

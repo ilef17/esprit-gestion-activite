@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext.jsx'
 import EspritLogo from '../../components/EspritLogo.jsx'
@@ -25,6 +25,12 @@ function Login() {
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [showForgotPassword, setShowForgotPassword] = useState(false)
+
+  // Le mot de passe est verrouillé tant que le nom d'utilisateur n'est pas renseigné —
+  // si l'utilisateur l'efface après coup, on vide aussi le mot de passe déjà tapé.
+  useEffect(() => {
+    if (!identifiant.trim() && password) setPassword('')
+  }, [identifiant]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -177,11 +183,17 @@ function Login() {
             <div className="password-field">
               <input
                 type={showPassword ? 'text' : 'password'}
-                placeholder="••••••••••"
+                placeholder={identifiant.trim() ? '••••••••••' : "Renseignez d'abord votre nom d'utilisateur"}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                disabled={!identifiant.trim()}
               />
-              <button type="button" className="password-toggle" onClick={() => setShowPassword(!showPassword)}>
+              <button
+                type="button"
+                className="password-toggle"
+                onClick={() => setShowPassword(!showPassword)}
+                disabled={!identifiant.trim()}
+              >
                 {showPassword ? (
                   <svg fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a20.3 20.3 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a20.3 20.3 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><path d="M1 1l22 22"/></svg>
                 ) : (

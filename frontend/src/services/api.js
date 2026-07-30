@@ -13,6 +13,20 @@ api.interceptors.request.use((config) => {
   return config
 })
 
+// Après toute requête qui modifie des données (création/modification/suppression),
+// on prévient le reste de l'app via un évènement global — utilisé par exemple par
+// StatsDashboard (page "Statistiques (Power BI natif)", présente sur les 3 tableaux
+// de bord) pour se rafraîchir tout de suite au lieu d'attendre son prochain sondage
+// périodique. Ne concerne que les requêtes qui réussissent réellement.
+const METHODES_MODIFIANTES = new Set(['post', 'put', 'patch', 'delete'])
+api.interceptors.response.use((response) => {
+  const method = (response.config?.method || '').toLowerCase()
+  if (METHODES_MODIFIANTES.has(method) && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('esprittech:data-changed', { detail: { url: response.config?.url } }))
+  }
+  return response
+})
+
 
 export async function loginRequest({ role, login, password, captchaToken }) {
   const res = await api.post('/auth/login', { role, login, password, captchaToken })
@@ -55,6 +69,16 @@ export async function getMembresSousEquipe(id) {
   return res.data
 }
 
+/* ---------- Collaborateur : mes sous-équipes (avec responsable) ---------- */
+export async function getMesEquipesAvecResponsable() {
+  const res = await api.get('/sous-equipes/mes-equipes')
+  return res.data
+}
+export async function getMesEquipesHorsUpAvecResponsable() {
+  const res = await api.get('/equipes-hors-up/mes-equipes-collaborateur')
+  return res.data
+}
+
 /* ---------- Responsable (mon équipe / mes tâches) ---------- */
 export async function getMesSousEquipes() {
   const res = await api.get('/sous-equipes/mes-sous-equipes')
@@ -76,13 +100,6 @@ export async function deleteTache(id) {
   const res = await api.delete(`/taches/${id}`)
   return res.data
 }
-// Répartition équitable des tâches non-assignées d'une sous-équipe, par nombre
-// de classes de chaque collaborateur (vœux pédagogiques) — évite le favoritisme.
-export async function repartirTaches(idSousEquipe) {
-  const res = await api.post('/taches/repartir', { id_sous_equipe: idSousEquipe })
-  return res.data
-}
-
 export async function addMembreSousEquipe(id, idCollaborateur) {
   const res = await api.post(`/sous-equipes/${id}/membres`, { id_collaborateur: idCollaborateur })
   return res.data
@@ -91,7 +108,15 @@ export async function removeMembreSousEquipe(id, idCollaborateur) {
   const res = await api.delete(`/sous-equipes/${id}/membres/${idCollaborateur}`)
   return res.data
 }
-/* ---------- Équipes hors UP (admin) ---------- */
+/* ---------- Équipes hors UP (admin, + responsable pour la sienne) ---------- */
+export async function getMesEquipesHorsUp() {
+  const res = await api.get('/equipes-hors-up/mes-equipes-hors-up')
+  return res.data
+}
+export async function getMembresEquipeHorsUp(id) {
+  const res = await api.get(`/equipes-hors-up/${id}/membres`)
+  return res.data
+}
 export async function getEquipesHorsUpDetaillees(annee_universitaire, semestre) {
   const res = await api.get('/equipes-hors-up/detaillees', { params: { annee_universitaire, semestre } })
   return res.data
@@ -156,21 +181,15 @@ export async function resetPassword(resetToken, password) {
   return res.data
 }
 
-/* ---------- Demandes hors-équipe (admin) ---------- */
+/* ---------- Activité hors-équipe (admin — lecture seule) ---------- */
 export async function getDemandes(annee_universitaire, semestre) {
   const res = await api.get('/demandes', { params: { annee_universitaire, semestre } })
   return res.data
 }
-export async function envoyerVerificationDemande(id, destinataire_verification) {
-  const res = await api.patch(`/demandes/${id}/envoyer`, { destinataire_verification })
-  return res.data
-}
-export async function validerDemande(id) {
-  const res = await api.patch(`/demandes/${id}/valider`)
-  return res.data
-}
-export async function refuserDemande(id) {
-  const res = await api.patch(`/demandes/${id}/refuser`)
+
+/* ---------- Activité hors-équipe (responsable — lecture seule) ---------- */
+export async function getDemandesResponsable() {
+  const res = await api.get('/demandes/mes-equipes-demandes')
   return res.data
 }
 
@@ -203,6 +222,10 @@ export async function calculerScores(idEquipe, notes, type = 'up', annee_univers
   const res = await api.post('/evaluations/calculer', { id_sous_equipe: idEquipe, notes, type, annee_universitaire, semestre })
   return res.data
 }
+export async function calculerScoresPourTous(annee_universitaire, semestre) {
+  const res = await api.post('/evaluations/calculer-tout', { annee_universitaire, semestre })
+  return res.data
+}
 /* ---------- Rapports ---------- */
 export async function getRapports(annee_universitaire, semestre) {
   const res = await api.get('/rapports', { params: { annee_universitaire, semestre } })
@@ -223,24 +246,41 @@ export async function createTache(payload) {
   const res = await api.post('/taches', payload)
   return res.data
 }
+// Publication groupée : plusieurs tâches en un seul envoi, une seule notif/e-mail à l'équipe.
+export async function createTachesEnLot(payload) {
+  const res = await api.post('/taches/lot', payload)
+  return res.data
+}
 
 /* ---------- Mes tâches (collaborateur) ---------- */
 export async function getMesTaches() {
   const res = await api.get('/taches/mes-taches')
   return res.data
 }
-export async function updateMaTache(id, statut, membreConcerne) {
-  const res = await api.patch(`/taches/${id}`, { statut, membre_concerne: membreConcerne })
+export async function updateMaTache(id, statut, membreConcerne, raisonProbleme) {
+  const res = await api.patch(`/taches/${id}`, { statut, membre_concerne: membreConcerne, raison_probleme: raisonProbleme })
+  return res.data
+}
+export async function getTachesDisponibles() {
+  const res = await api.get('/taches/disponibles')
+  return res.data
+}
+export async function choisirTache(id) {
+  const res = await api.post(`/taches/${id}/choisir`)
   return res.data
 }
 
-/* ---------- Mes demandes hors-équipe (collaborateur) ---------- */
+/* ---------- Activité hors-équipe (collaborateur) ---------- */
 export async function getMesDemandes() {
   const res = await api.get('/demandes/mes-demandes')
   return res.data
 }
 export async function creerDemande(payload) {
   const res = await api.post('/demandes', payload)
+  return res.data
+}
+export async function updateStatutDemande(id, statut) {
+  const res = await api.patch(`/demandes/${id}`, { statut })
   return res.data
 }
 
@@ -272,6 +312,10 @@ export async function getParametres() {
 }
 export async function updateParametres(payload) {
   const res = await api.put('/parametres', payload)
+  return res.data
+}
+export async function ajouterAnneeSysteme(annee) {
+  const res = await api.post('/parametres/annees', { annee })
   return res.data
 }
 
@@ -339,7 +383,7 @@ export async function marquerToutesNotificationsLues() {
   return res.data
 }
 
-/* ---------- Vœux pédagogiques (admin) ---------- */
+/* ---------- Vœux pédagogiques (admin) — formulaire dynamique ---------- */
 export async function getCampagnesVoeuxPedagogiques() {
   const res = await api.get('/voeux-pedagogiques/campagnes')
   return res.data
@@ -368,16 +412,48 @@ export async function deleteCampagneVoeuxPedagogiques(id) {
   const res = await api.delete(`/voeux-pedagogiques/campagnes/${id}`)
   return res.data
 }
+export async function ajouterQuestionVoeuxPedagogiques(idCampagne, payload) {
+  const res = await api.post(`/voeux-pedagogiques/campagnes/${idCampagne}/questions`, payload)
+  return res.data
+}
+export async function modifierQuestionVoeuxPedagogiques(idQuestion, payload) {
+  const res = await api.put(`/voeux-pedagogiques/questions/${idQuestion}`, payload)
+  return res.data
+}
+export async function supprimerQuestionVoeuxPedagogiques(idQuestion) {
+  const res = await api.delete(`/voeux-pedagogiques/questions/${idQuestion}`)
+  return res.data
+}
+export async function ajouterModuleVoeuxPedagogiques(idCampagne, payload) {
+  const res = await api.post(`/voeux-pedagogiques/campagnes/${idCampagne}/modules`, payload)
+  return res.data
+}
+export async function modifierModuleVoeuxPedagogiques(idModule, payload) {
+  const res = await api.put(`/voeux-pedagogiques/modules/${idModule}`, payload)
+  return res.data
+}
+export async function supprimerModuleVoeuxPedagogiques(idModule) {
+  const res = await api.delete(`/voeux-pedagogiques/modules/${idModule}`)
+  return res.data
+}
+export async function supprimerOptionVoeuxPedagogiques(idOption) {
+  const res = await api.delete(`/voeux-pedagogiques/options/${idOption}`)
+  return res.data
+}
 export async function getReponsesCampagneVoeuxPedagogiques(id) {
   const res = await api.get(`/voeux-pedagogiques/campagnes/${id}/reponses`)
   return res.data
 }
-export async function ajouterAffectationVoeuxPedagogiques(idReponse, payload) {
-  const res = await api.post(`/voeux-pedagogiques/reponses/${idReponse}/affectations`, payload)
+export async function getVueAffectationVoeuxPedagogiques(id) {
+  const res = await api.get(`/voeux-pedagogiques/campagnes/${id}/affectation`)
   return res.data
 }
-export async function supprimerAffectationVoeuxPedagogiques(idAffectation) {
-  const res = await api.delete(`/voeux-pedagogiques/affectations/${idAffectation}`)
+export async function affecterClasseVoeuxPedagogiques(payload) {
+  const res = await api.post('/voeux-pedagogiques/affectations', payload)
+  return res.data
+}
+export async function supprimerAffectationVoeuxPedagogiques(idAffectation, idCampagne) {
+  const res = await api.delete(`/voeux-pedagogiques/affectations/${idAffectation}`, { params: { id_campagne: idCampagne } })
   return res.data
 }
 
@@ -391,7 +467,7 @@ export async function saveMaReponseVoeuxPedagogiques(payload) {
   return res.data
 }
 export async function getMesAffectationsVoeuxPedagogiques() {
-  const res = await api.get('/voeux-pedagogiques/mes-affectations')
+  const res = await api.get('/voeux-pedagogiques/mes-classes-affectees')
   return res.data
 }
 

@@ -22,7 +22,7 @@ import { getParametres } from './models/parametreSysteme.model.js'
 import { lancerSauvegarde } from './models/sauvegarde.model.js'
 import { getTachesEcheanceProche, marquerRappelEcheanceEnvoye } from './models/tache.model.js'
 import { creerNotification } from './models/notification.model.js'
-import { ensureNotificationSchema } from './utils/ensureSchema.js'
+import { ensureNotificationSchema, ensureVoeuxPedagogiquesSchema } from './utils/ensureSchema.js'
 import { sendTacheEcheanceEmail } from './utils/Mailer.js'
 
 dotenv.config()
@@ -57,6 +57,7 @@ const PORT = process.env.PORT || 5000
 // Provisionne automatiquement la table `notification` et les colonnes associées
 // avant d'accepter des requêtes — évite toute migration SQL manuelle.
 await ensureNotificationSchema()
+await ensureVoeuxPedagogiquesSchema()
 
 app.listen(PORT, () => {
   console.log(`Serveur backend lancé sur http://localhost:${PORT}`)

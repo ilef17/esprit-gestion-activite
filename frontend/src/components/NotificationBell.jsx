@@ -23,6 +23,9 @@ const TYPE_ICONS = {
   demande_reponse: '✅',
   affectation_pedagogique: '🎓',
   campagne_voeux: '📣',
+  taches_disponibles: '🆕',
+  tache_validee: '✔️',
+  probleme_coordination: '⚠️',
 }
 
 // Cloche de notifications partagée par les 3 tableaux de bord (admin, responsable,

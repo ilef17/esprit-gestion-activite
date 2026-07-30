@@ -14,17 +14,17 @@ import {
 const COULEURS = ['#0d1b6b', '#2196f3', '#e4032e', '#f5a623', '#8bc34a']
 
 const STATUT_COLORS = {
-  validee: { bg: '#e7f8ef', text: '#1fae63' },
-  en_cours: { bg: '#e8f1fd', text: '#2196f3' },
-  a_faire: { bg: '#f2f2f2', text: '#666' },
-  a_refaire: { bg: '#fff4e5', text: '#f5a623' },
-  probleme_coordination: { bg: '#fdeaea', text: '#e4032e' },
-  attente: { bg: '#fff4e5', text: '#f5a623' },
-  envoye: { bg: '#e8f1fd', text: '#2196f3' },
-  refusee: { bg: '#fdeaea', text: '#e4032e' },
+  validee: { bg: 'var(--green-tint)', text: 'var(--green)' },
+  en_cours: { bg: 'var(--blue-tint)', text: 'var(--blue)' },
+  a_faire: { bg: 'var(--bg)', text: 'var(--text-muted)' },
+  a_refaire: { bg: 'var(--amber-tint)', text: 'var(--amber)' },
+  probleme_coordination: { bg: 'var(--red-tint)', text: 'var(--red)' },
+  attente: { bg: 'var(--amber-tint)', text: 'var(--amber)' },
+  envoye: { bg: 'var(--blue-tint)', text: 'var(--blue)' },
+  refusee: { bg: 'var(--red-tint)', text: 'var(--red)' },
 }
 function StatutBadge({ statut }) {
-  const c = STATUT_COLORS[statut] || { bg: '#f2f2f2', text: '#666' }
+  const c = STATUT_COLORS[statut] || { bg: 'var(--bg)', text: 'var(--text-muted)' }
   return (
     <span style={{
       display: 'inline-block', padding: '3px 10px', borderRadius: 999,
@@ -39,25 +39,25 @@ function StatutBadge({ statut }) {
 function TauxBar({ valeur }) {
   const v = Number(valeur) || 0
   const pct = Math.round(Math.max(0, Math.min(1, v)) * 100)
-  const color = pct >= 70 ? '#1fae63' : pct >= 40 ? '#f5a623' : '#e4032e'
+  const color = pct >= 70 ? 'var(--green)' : pct >= 40 ? 'var(--amber)' : 'var(--red)'
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      <div style={{ flex: 1, height: 6, borderRadius: 999, background: '#eee', overflow: 'hidden', minWidth: 50 }}>
+      <div style={{ flex: 1, height: 6, borderRadius: 999, background: 'var(--border)', overflow: 'hidden', minWidth: 50 }}>
         <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 999 }} />
       </div>
-      <span style={{ fontSize: 12.5, fontWeight: 600, color: '#444', width: 36 }}>{pct}%</span>
+      <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text)', width: 36 }}>{pct}%</span>
     </div>
   )
 }
 
 function SousCarte({ title, subtitle, children }) {
   return (
-    <div style={{ border: '1px solid #e0e0e0', borderRadius: 10, marginBottom: 20, overflow: 'hidden' }}>
-      <div style={{ padding: '14px 18px', borderBottom: '1px solid #eee', background: '#fafafa' }}>
-        <div style={{ fontWeight: 700, fontSize: 15 }}>{title}</div>
-        {subtitle && <div style={{ fontSize: 12.5, color: '#888', marginTop: 2 }}>{subtitle}</div>}
+    <div style={{ border: '1px solid var(--border)', borderRadius: 10, marginBottom: 20, overflow: 'hidden' }}>
+      <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)', background: 'var(--bg)' }}>
+        <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text)' }}>{title}</div>
+        {subtitle && <div style={{ fontSize: 12.5, color: 'var(--text-muted)', marginTop: 2 }}>{subtitle}</div>}
       </div>
-      <div>{children}</div>
+      <div style={{ background: 'var(--card)' }}>{children}</div>
     </div>
   )
 }
@@ -66,27 +66,27 @@ function GridTable({ columns, rows, renderRow, rowKey, emptyText }) {
   const template = columns.map((c) => c.width || 'minmax(80px, 1fr)').join(' ')
   return (
     <div>
-      <div style={{ display: 'grid', gridTemplateColumns: template, gap: 12, padding: '10px 18px', background: '#fafafa', borderBottom: '1px solid #eee' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: template, gap: 12, padding: '10px 18px', background: 'var(--bg)', borderBottom: '1px solid var(--border)' }}>
         {columns.map((c, i) => (
-          <div key={i} style={{ fontSize: 11, fontWeight: 700, color: '#999', textTransform: 'uppercase', letterSpacing: '.03em', textAlign: c.align || 'left' }}>
+          <div key={i} style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.03em', textAlign: c.align || 'left' }}>
             {c.label}
           </div>
         ))}
       </div>
       {rows.length === 0 ? (
-        <div style={{ padding: '16px 18px', color: '#999', fontSize: 13 }}>{emptyText}</div>
+        <div style={{ padding: '16px 18px', color: 'var(--text-faint)', fontSize: 13 }}>{emptyText}</div>
       ) : (
         rows.map((row, i) => (
           <div
             key={rowKey ? rowKey(row, i) : i}
             style={{
               display: 'grid', gridTemplateColumns: template, gap: 12, alignItems: 'center',
-              padding: '12px 18px', borderBottom: '1px solid #f2f2f2',
-              background: i % 2 === 1 ? '#fbfbfd' : '#fff',
+              padding: '12px 18px', borderBottom: '1px solid var(--border)',
+              background: i % 2 === 1 ? 'var(--bg)' : 'var(--card)',
             }}
           >
             {renderRow(row).map((cell, j) => (
-              <div key={j} style={{ fontSize: 13.5, color: '#222', textAlign: columns[j].align || 'left' }}>{cell}</div>
+              <div key={j} style={{ fontSize: 13.5, color: 'var(--text)', textAlign: columns[j].align || 'left' }}>{cell}</div>
             ))}
           </div>
         ))
@@ -104,20 +104,26 @@ function formatDate(iso) {
 
 function Carte({ label, valeur }) {
   return (
-    <div style={{ border: '1px solid #e0e0e0', borderRadius: 8, padding: '16px 20px', minWidth: 140 }}>
-      <div style={{ fontSize: 28, fontWeight: 700 }}>{valeur}</div>
-      <div style={{ fontSize: 13, color: '#666' }}>{label}</div>
+    <div style={{ border: '1px solid var(--border)', borderRadius: 8, padding: '16px 20px', minWidth: 140, background: 'var(--card)' }}>
+      <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--text)' }}>{valeur}</div>
+      <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{label}</div>
     </div>
   )
 }
 
 // scope : 'global' | 'collaborateur' | 'sous-equipe' | 'avancement' | 'mon-espace'
+//
+// Se tient à jour sans que l'utilisateur ait à recharger la page : un évènement global
+// 'esprittech:data-changed' (émis par services/api.js après chaque création/modification/
+// suppression, sur les 3 tableaux de bord) déclenche un rafraîchissement immédiat, et un
+// sondage périodique (30s) rattrape les changements faits par d'autres utilisateurs.
+const POLL_INTERVAL_MS = 30000
+
 export default function StatsDashboard({ scope, annee, semestre }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    setLoading(true)
     const fetchers = {
       global: getDashboardVueGlobale,
       collaborateur: getDashboardParCollaborateur,
@@ -125,9 +131,30 @@ export default function StatsDashboard({ scope, annee, semestre }) {
       avancement: getDashboardEtatAvancement,
       'mon-espace': getDashboardMonEspace,
     }
-    fetchers[scope](annee, semestre)
-      .then(setData)
-      .finally(() => setLoading(false))
+
+    let annule = false
+    // premierChargement affiche "Chargement…" seulement au tout premier appel — les
+    // rafraîchissements suivants (évènement ou sondage) remplacent les données en
+    // silence, sans faire clignoter la page.
+    let premierChargement = true
+    const charger = () => {
+      if (premierChargement) setLoading(true)
+      return fetchers[scope](annee, semestre)
+        .then((result) => { if (!annule) setData(result) })
+        .finally(() => { if (!annule && premierChargement) { setLoading(false); premierChargement = false } })
+    }
+
+    charger()
+
+    const onDataChanged = () => charger()
+    window.addEventListener('esprittech:data-changed', onDataChanged)
+    const intervalId = setInterval(charger, POLL_INTERVAL_MS)
+
+    return () => {
+      annule = true
+      window.removeEventListener('esprittech:data-changed', onDataChanged)
+      clearInterval(intervalId)
+    }
   }, [scope, annee, semestre])
 
   if (loading) return <p>Chargement…</p>
@@ -172,7 +199,7 @@ export default function StatsDashboard({ scope, annee, semestre }) {
           rowKey={(c) => c.identifiant_esprit}
           emptyText="Aucun collaborateur"
           renderRow={(c) => [
-            <span style={{ color: '#888' }}>{c.identifiant_esprit}</span>,
+            <span style={{ color: 'var(--text-muted)' }}>{c.identifiant_esprit}</span>,
             <b>{c.nom}</b>,
             c.total_taches,
             c.taches_validees,
@@ -186,23 +213,28 @@ export default function StatsDashboard({ scope, annee, semestre }) {
 
   if (scope === 'sous-equipe') {
     return (
-      <SousCarte title="Par sous-équipe" subtitle={`${data.length} sous-équipe${data.length > 1 ? 's' : ''}`}>
+      <SousCarte title="Par sous-équipe" subtitle={`${data.length} équipe${data.length > 1 ? 's' : ''} (UP + hors UP)`}>
         <GridTable
           columns={[
-            { label: 'Sous-équipe', width: '1.2fr' },
-            { label: 'Responsable', width: '1.2fr' },
+            { label: 'Sous-équipe', width: '1.1fr' },
+            { label: 'Type', width: '90px' },
+            { label: 'Responsable', width: '1.1fr' },
             { label: 'Total tâches', width: '110px', align: 'center' },
             { label: 'Taux', width: '140px' },
             { label: 'Nb collaborateurs', width: '140px', align: 'center' },
           ]}
           rows={data}
-          rowKey={(se) => se.sous_equipe}
-          emptyText="Aucune sous-équipe"
+          rowKey={(se, i) => `${se.type}-${se.sous_equipe}-${i}`}
+          emptyText="Aucune équipe"
           renderRow={(se) => [
             <b>{se.sous_equipe}</b>,
-            se.responsable,
+            <span style={{
+              fontSize: 11.5, fontWeight: 600, padding: '2px 8px', borderRadius: 999,
+              background: se.type === 'UP' ? 'var(--blue-tint)' : 'var(--bg)', color: se.type === 'UP' ? 'var(--blue)' : 'var(--text-muted)',
+            }}>{se.type}</span>,
+            se.responsable || '—',
             se.total_taches,
-            <TauxBar valeur={se.taux_avancement} />,
+            se.taux_avancement == null ? <span style={{ color: 'var(--text-faint)' }}>—</span> : <TauxBar valeur={se.taux_avancement} />,
             se.nb_collaborateurs,
           ]}
         />
@@ -271,26 +303,26 @@ export default function StatsDashboard({ scope, annee, semestre }) {
             renderRow={(t) => [
               <b>{t.titre}</b>,
               <StatutBadge statut={t.statut} />,
-              <span style={{ color: '#888', textTransform: 'capitalize' }}>{t.priorite}</span>,
-              <span style={{ color: '#888' }}>{formatDate(t.date_echeance)}</span>,
+              <span style={{ color: 'var(--text-muted)', textTransform: 'capitalize' }}>{t.priorite}</span>,
+              <span style={{ color: 'var(--text-muted)' }}>{formatDate(t.date_echeance)}</span>,
             ]}
           />
         </SousCarte>
 
-        <SousCarte title="Mes demandes hors-équipe" subtitle={`${data.mes_demandes.length} demande${data.mes_demandes.length > 1 ? 's' : ''}`}>
+        <SousCarte title="Mes activités hors-équipe" subtitle={`${data.mes_demandes.length} activité${data.mes_demandes.length > 1 ? 's' : ''}`}>
           <GridTable
             columns={[
-              { label: 'Contexte', width: '1.6fr' },
+              { label: 'Titre', width: '1.6fr' },
               { label: 'Statut', width: '170px' },
               { label: 'Date de réception', width: '140px' },
             ]}
             rows={data.mes_demandes}
             rowKey={(d, i) => i}
-            emptyText="Aucune demande hors-équipe"
+            emptyText="Aucune activité hors-équipe"
             renderRow={(d) => [
-              <b>{d.contexte}</b>,
+              <b>{d.titre}</b>,
               <StatutBadge statut={d.statut} />,
-              <span style={{ color: '#888' }}>{formatDate(d.date_reception)}</span>,
+              <span style={{ color: 'var(--text-muted)' }}>{formatDate(d.date_reception)}</span>,
             ]}
           />
         </SousCarte>
