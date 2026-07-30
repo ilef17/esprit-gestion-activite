@@ -258,3 +258,51 @@ export async function ensureVoeuxPedagogiquesSchema() {
     console.error('[schema] Erreur lors de la vérification du schéma des vœux pédagogiques :', err)
   }
 }
+
+// Auto-provisionne au démarrage la table `annee_universitaire_creee` — l'équivalent
+// web de ParametreSystemeDAO.ensureAnneesTableExists() côté application desktop
+// (JavaFX) du collègue. Historique permanent, en base, de toutes les années
+// universitaires créées/actives : corrige le bug où une année tout juste définie
+// comme "période active" disparaissait des sélecteurs Année (Admin / Responsable /
+// Collaborateur) après déconnexion/reconnexion (voir parametreSysteme.model.js).
+// Voir aussi migration_annee_universitaire_creee.sql pour l'appliquer manuellement.
+export async function ensureAnneeUniversitaireSchema() {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS \`annee_universitaire_creee\` (
+        \`annee\` varchar(9) NOT NULL,
+        \`date_creation\` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (\`annee\`)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+    `)
+
+    // Rattrape l'historique à partir des tables/colonnes qui existent réellement sur
+    // cette base (tache/evaluation_score/rapport ont une colonne annee_universitaire ;
+    // parametre_systeme porte en plus la liste JSON annees_supplementaires) — chaque
+    // étape vérifie l'existence avant d'y toucher, pour ne jamais planter si une base
+    // plus ancienne n'a pas encore telle colonne.
+    for (const table of ['tache', 'evaluation_score', 'rapport', 'parametre_systeme']) {
+      if (await colonneExiste(table, 'annee_universitaire')) {
+        await pool.query(
+          `INSERT IGNORE INTO \`annee_universitaire_creee\` (\`annee\`)
+             SELECT DISTINCT \`annee_universitaire\` FROM \`${table}\`
+              WHERE \`annee_universitaire\` IS NOT NULL`
+        )
+      }
+    }
+    if (await colonneExiste('parametre_systeme', 'annees_supplementaires')) {
+      const [rows] = await pool.query(
+        'SELECT annees_supplementaires FROM parametre_systeme WHERE id = 1'
+      )
+      const brut = rows[0]?.annees_supplementaires
+      const liste = Array.isArray(brut) ? brut : JSON.parse(brut || '[]')
+      for (const annee of liste) {
+        await pool.query('INSERT IGNORE INTO `annee_universitaire_creee` (`annee`) VALUES (?)', [annee])
+      }
+    }
+
+    console.log('[schema] Années universitaires créées : schéma vérifié ✓')
+  } catch (err) {
+    console.error('[schema] Erreur lors de la vérification du schéma des années universitaires :', err)
+  }
+}

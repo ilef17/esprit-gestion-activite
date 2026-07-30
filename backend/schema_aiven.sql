@@ -2,8 +2,6 @@
 -- Aligné sur esprittech.sql (dump fourni), complété avec l'authentification
 -- (mot_de_passe, identifiant_esprit) déjà présente dans le dump.
 
-CREATE DATABASE IF NOT EXISTS esprittech;
-USE esprittech;
 
 -- --------------------------------------------------------
 -- admin
