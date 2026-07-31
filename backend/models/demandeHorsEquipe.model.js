@@ -1,5 +1,5 @@
 import pool from '../config/db.js'
-import { getBornesPeriode } from '../utils/periode.js'
+import { getBornesPeriode, getPeriodeActuelle } from '../utils/periode.js'
 
 // Sous-requête ré-utilisée par les 3 lectures ci-dessous : agrège, pour une demande,
 // les noms de TOUTES les équipes choisies (sous-équipes et/ou équipes hors UP), en plus
@@ -96,11 +96,14 @@ export async function getDemandeById(id) {
 }
 
 export async function createDemande({ id_collaborateur, titre, description, date_debut, date_fin, id_sous_equipe, id_up, contact_responsable }) {
+  // Une demande appartient à la période où elle a été créée (comme tache.model.js) —
+  // sinon elle reste invisible côté desktop, qui filtre par année/semestre actifs.
+  const { annee_universitaire, semestre } = getPeriodeActuelle()
   const [result] = await pool.query(
     `INSERT INTO demande_hors_equipe
-       (id_collaborateur, titre, description, date_debut, date_fin, id_sous_equipe, id_up, contact_responsable)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [id_collaborateur, titre, description || null, date_debut || null, date_fin || null, id_sous_equipe || null, id_up || null, contact_responsable || null]
+       (id_collaborateur, titre, description, date_debut, date_fin, id_sous_equipe, id_up, contact_responsable, annee_universitaire, semestre)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id_collaborateur, titre, description || null, date_debut || null, date_fin || null, id_sous_equipe || null, id_up || null, contact_responsable || null, annee_universitaire, semestre]
   )
   return getDemandeById(result.insertId)
 }

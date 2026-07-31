@@ -1,5 +1,5 @@
 import pool from '../config/db.js'
-import { getBornesPeriode } from '../utils/periode.js'
+import { getBornesPeriode, getPeriodeActuelle } from '../utils/periode.js'
 
 // Liste simple
 export async function getAllEquipesHorsUp() {
@@ -96,12 +96,15 @@ export async function getEquipeHorsUpById(id) {
 }
 
 export async function createEquipeHorsUp({ nom, id_module, id_responsable, statut, ouverte_voeux, places_disponibles }) {
+  // Même règle que createDemande/createTache : sans période, l'équipe reste invisible
+  // côté desktop, qui filtre par année/semestre actifs.
+  const { annee_universitaire, semestre } = getPeriodeActuelle()
   const [result] = await pool.query(
-    `INSERT INTO equipe_hors_up (nom_up, id_module, id_responsable, statut, ouverte_voeux, places_disponibles)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [nom, id_module || null, id_responsable || null, statut || 'active', ouverte_voeux ? 1 : 0, places_disponibles || 0]
+    `INSERT INTO equipe_hors_up (nom_up, id_module, id_responsable, statut, ouverte_voeux, places_disponibles, annee_universitaire, semestre)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [nom, id_module || null, id_responsable || null, statut || 'active', ouverte_voeux ? 1 : 0, places_disponibles || 0, annee_universitaire, semestre]
   )
-  return { id_up: result.insertId, nom_up: nom, id_module, id_responsable, statut, ouverte_voeux, places_disponibles }
+  return { id_up: result.insertId, nom_up: nom, id_module, id_responsable, statut, ouverte_voeux, places_disponibles, annee_universitaire, semestre }
 }
 
 export async function updateEquipeHorsUp(id, data) {

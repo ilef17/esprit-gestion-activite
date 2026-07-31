@@ -1,5 +1,5 @@
 import pool from '../config/db.js'
-import { getBornesPeriode } from '../utils/periode.js'
+import { getBornesPeriode, getPeriodeActuelle } from '../utils/periode.js'
 
 // Liste simple (utilisée par la page signup, publique)
 export async function getAllSousEquipes() {
@@ -119,12 +119,15 @@ export async function getSousEquipeById(id) {
 }
 
 export async function createSousEquipe({ nom, id_module, id_responsable, statut }) {
+  // Même règle que createDemande/createTache : sans période, la sous-équipe reste
+  // invisible côté desktop, qui filtre par année/semestre actifs.
+  const { annee_universitaire, semestre } = getPeriodeActuelle()
   const [result] = await pool.query(
-    `INSERT INTO sous_equipe (nom, id_module, id_responsable, statut)
-     VALUES (?, ?, ?, ?)`,
-    [nom, id_module || null, id_responsable || null, statut || 'active']
+    `INSERT INTO sous_equipe (nom, id_module, id_responsable, statut, annee_universitaire, semestre)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [nom, id_module || null, id_responsable || null, statut || 'active', annee_universitaire, semestre]
   )
-  return { id_sous_equipe: result.insertId, nom, id_module, id_responsable, statut }
+  return { id_sous_equipe: result.insertId, nom, id_module, id_responsable, statut, annee_universitaire, semestre }
 }
 
 export async function updateSousEquipe(id, data) {
@@ -155,7 +158,7 @@ export async function addMembreToSousEquipe(idSousEquipe, idCollaborateur) {
 
 export async function removeMembreFromSousEquipe(idSousEquipe, idCollaborateur) {
   await pool.query(
-    'DELETE FROM collaborateur_sousequipe WHERE id_sous_equipe = ? AND id_collaborateur = ?',
+    'DELETE FROM sous_equipe WHERE id_sous_equipe = ? AND id_collaborateur = ?',
     [idSousEquipe, idCollaborateur]
   )
 }
