@@ -158,7 +158,7 @@ export async function addMembreToSousEquipe(idSousEquipe, idCollaborateur) {
 
 export async function removeMembreFromSousEquipe(idSousEquipe, idCollaborateur) {
   await pool.query(
-    'DELETE FROM sous_equipe WHERE id_sous_equipe = ? AND id_collaborateur = ?',
+    'DELETE FROM collaborateur_sousequipe WHERE id_sous_equipe = ? AND id_collaborateur = ?',
     [idSousEquipe, idCollaborateur]
   )
 }
