@@ -342,7 +342,7 @@ export default function ResponsableDashboard() {
           <div className="nav-section-label">Compte</div>
           <nav className="nav">
             <a href="#" className={activePage === 'profil' ? 'active' : ''} onClick={(e) => { e.preventDefault(); setActivePage('profil') }}>
-              <Icon.profile /> Mon profil
+              <Icon.profile /> Profil
             </a>
           </nav>
 

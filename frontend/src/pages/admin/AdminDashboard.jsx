@@ -128,7 +128,7 @@ const NAV_SECTIONS = [
     { page: 'voeux-pedagogiques', label: 'Vœux pédagogiques', icon: 'poll' },
   ]},
   { label: 'Système', items: [
-    { page: 'parametres', label: 'Paramètres', icon: 'profile' },
+    { page: 'parametres', label: 'Paramètres', icon: 'settings' },
   ]},
 ]
 
