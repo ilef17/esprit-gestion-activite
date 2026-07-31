@@ -8,11 +8,11 @@ import Login from './pages/auth/Login.jsx'
 import Signup from './pages/auth/Signup.jsx'
 
 function HomeRedirect() {
-  const { user } = useAuth()
+  const { role } = useAuth()
 
-  if (user?.role === 'admin') return <Navigate to="/admin" replace />
-  if (user?.role === 'responsable') return <Navigate to="/responsable" replace />
-  
+  if (role === 'admin') return <Navigate to="/admin" replace />
+  if (role === 'responsable') return <Navigate to="/responsable" replace />
+
   return <CollaborateurDashboard />
 }
 
