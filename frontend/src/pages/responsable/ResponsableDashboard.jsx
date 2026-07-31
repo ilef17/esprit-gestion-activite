@@ -1056,8 +1056,18 @@ function Avancement({ membres, taches, tauxCompletion }) {
 // des équipes qu'il gère — aucune action possible (pas d'accepter/refuser).
 function ActiviteHorsEquipe({ demandes, loadingDemandes }) {
   const [selected, setSelected] = useState(null)
+  const [filtreMembre, setFiltreMembre] = useState('tous')
 
-  const toutes = [...demandes].sort((a, b) => new Date(b.date_reception) - new Date(a.date_reception))
+  const membres = [...new Map(
+    demandes
+      .filter((d) => d.id_collaborateur)
+      .map((d) => [d.id_collaborateur, d.collaborateur_nom])
+  ).entries()]
+    .sort((a, b) => (a[1] || '').localeCompare(b[1] || ''))
+
+  const toutes = [...demandes]
+    .filter((d) => filtreMembre === 'tous' || String(d.id_collaborateur) === filtreMembre)
+    .sort((a, b) => new Date(b.date_reception) - new Date(a.date_reception))
 
   const periodeLabel = selected && (selected.date_debut || selected.date_fin)
     ? `${selected.date_debut ? new Date(selected.date_debut).toLocaleDateString('fr-FR') : '—'} → ${selected.date_fin ? new Date(selected.date_fin).toLocaleDateString('fr-FR') : '—'}`
@@ -1076,6 +1086,12 @@ function ActiviteHorsEquipe({ demandes, loadingDemandes }) {
             <h2>Toutes les activités</h2>
             <div className="hint">{loadingDemandes ? '…' : `${toutes.length} activité${toutes.length > 1 ? 's' : ''}`}</div>
           </div>
+          <select className="select-chip" value={filtreMembre} onChange={(e) => setFiltreMembre(e.target.value)}>
+            <option value="tous">Tous les membres</option>
+            {membres.map(([id, nom]) => (
+              <option key={id} value={String(id)}>{nom}</option>
+            ))}
+          </select>
         </div>
         <div className="list">
           {toutes.map((d) => (
@@ -1092,7 +1108,7 @@ function ActiviteHorsEquipe({ demandes, loadingDemandes }) {
             </div>
           ))}
           {!loadingDemandes && toutes.length === 0 && (
-            <div className="list-item"><div className="body"><div className="desc">Aucune activité hors-équipe pour le moment</div></div></div>
+            <div className="list-item"><div className="body"><div className="desc">{filtreMembre === 'tous' ? 'Aucune activité hors-équipe pour le moment' : 'Aucune activité hors-équipe pour ce membre'}</div></div></div>
           )}
         </div>
       </div>

@@ -612,7 +612,7 @@ export default function AdminDashboard() {
               />
             )}
             {activePage === 'demandes' && (
-              <Demandes demandes={demandes} />
+              <Demandes demandes={demandes} teams={sousEquipes} horsUpTeams={equipesHorsUp} users={allUsers} />
             )}
             {activePage === 'evaluation' && (
               <Evaluation teams={sousEquipes} horsUpTeams={equipesHorsUp} showToast={showToast} filtreAnnee={filtreAnnee} filtreSemestre={filtreSemestre} />
@@ -1524,13 +1524,32 @@ function Utilisateurs({ users, teams, horsUpTeams, showToast, confirm, onChanged
   )
 }
 /* ================= ACTIVITÉ HORS-ÉQUIPE (visualisation uniquement) ================= */
-function Demandes({ demandes }) {
+function Demandes({ demandes, teams, horsUpTeams, users }) {
   // Page passée en simple visualisation : plus d'acceptation/refus côté admin.
   // Quand un collaborateur ajoute une activité hors-équipe, elle apparaît ici
   // avec son statut, à titre informatif uniquement.
   const [selected, setSelected] = useState(null) // activité affichée dans la modale de détail (lecture seule)
+  const [equipeFilter, setEquipeFilter] = useState('') // '' | `up:${id}` | `hors_up:${id}`
+  const [collaborateurFilter, setCollaborateurFilter] = useState('') // '' | id_collaborateur
 
-  const toutes = [...demandes].sort((a, b) => new Date(b.date_reception) - new Date(a.date_reception))
+  const collaborateurs = (users || []).filter((u) => u.role === 'collaborateur')
+
+  const toutes = [...demandes]
+    .filter((d) => {
+      if (!equipeFilter) return true
+      const [type, idStr] = equipeFilter.split(':')
+      const id = Number(idStr)
+      if (type === 'up') {
+        if (d.id_sous_equipe === id) return true
+        const nom = (teams || []).find((t) => t.id === id)?.nom
+        return !!nom && (d.equipes_noms || '').split(', ').includes(nom)
+      }
+      if (d.id_up === id) return true
+      const nom = (horsUpTeams || []).find((t) => t.id === id)?.nom
+      return !!nom && (d.equipes_noms || '').split(', ').includes(nom)
+    })
+    .filter((d) => !collaborateurFilter || String(d.id_collaborateur) === String(collaborateurFilter))
+    .sort((a, b) => new Date(b.date_reception) - new Date(a.date_reception))
 
   const periodeLabel = selected && (selected.date_debut || selected.date_fin)
     ? `${selected.date_debut ? new Date(selected.date_debut).toLocaleDateString('fr-FR') : '—'} → ${selected.date_fin ? new Date(selected.date_fin).toLocaleDateString('fr-FR') : '—'}`
@@ -1548,6 +1567,21 @@ function Demandes({ demandes }) {
           <div>
             <h2>Toutes les activités</h2>
             <div className="hint">{toutes.length} activité{toutes.length > 1 ? 's' : ''}</div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <select className="select-chip" value={equipeFilter} onChange={(e) => setEquipeFilter(e.target.value)}>
+              <option value="">Toutes les équipes</option>
+              <optgroup label="Sous-équipes (UP)">
+                {(teams || []).map((t) => <option key={`f-up-${t.id}`} value={`up:${t.id}`}>{t.nom}</option>)}
+              </optgroup>
+              <optgroup label="Équipes hors UP">
+                {(horsUpTeams || []).map((t) => <option key={`f-hu-${t.id}`} value={`hors_up:${t.id}`}>{t.nom}</option>)}
+              </optgroup>
+            </select>
+            <select className="select-chip" value={collaborateurFilter} onChange={(e) => setCollaborateurFilter(e.target.value)}>
+              <option value="">Tous les collaborateurs</option>
+              {collaborateurs.map((c) => <option key={`f-collab-${c.id}`} value={c.id}>{c.nom}</option>)}
+            </select>
           </div>
         </div>
         <div className="list">
@@ -2162,6 +2196,7 @@ function CellLibelle({ items, onOpenDetail, accent = 'blue' }) {
     </button>
   )
 }
+const ENCADREMENT_TYPE_LABELS = { pfe: 'PFE', stage: 'Stage', mini_projet: 'Mini-projet', autre: 'Autre' }
 
 function CategoryListModal({ title, items, onClose }) {
   return (
@@ -2179,6 +2214,13 @@ function CategoryListModal({ title, items, onClose }) {
                 <div>
                   <b style={{ fontSize: 13 }}>{a.titre}</b>
                   {a.role && <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 2 }}>Rôle : {a.role}</div>}
+                  {(a.sujet || a.type || a.annee_universitaire) && (
+                    <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 2 }}>
+                      {a.sujet ? `${a.sujet} · ` : ''}
+                      {a.type ? (ENCADREMENT_TYPE_LABELS[a.type] || a.type) : ''}
+                      {a.annee_universitaire ? ` · ${a.annee_universitaire}` : ''}
+                    </div>
+                  )}
                 </div>
                 {a.date && <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>{formatDateShortFr(a.date)}</span>}
               </div>
@@ -2283,7 +2325,7 @@ function ActiviteEcole({ showToast, filtreAnnee, filtreSemestre, confirm }) {
               {filtered.map((p) => (
                 <tr key={p.id}>
                   <td><div className="name-cell"><div className="avatar sm">{initials(p.nom)}</div><span className="n">{p.nom}</span></div></td>
-                  <td className="grp-start"><CellLibelle items={dansAnnee(p.encadrements)} accent="blue" onOpenDetail={(items) => setCategoryModal({ title: `Étudiants encadrés — ${p.nom}`, items })} /></td>
+                  <td className="grp-start"><CellLibelle items={p.encadrements} accent="blue" onOpenDetail={(items) => setCategoryModal({ title: `Étudiants encadrés — ${p.nom}`, items })} /></td>
                   <td><CellLibelle items={p.expertises} accent="blue" onOpenDetail={(items) => setCategoryModal({ title: `Expertises — ${p.nom}`, items })} /></td>
                   <td className="grp-start"><CellLibelle items={dansPeriode(p.membre_jury)} accent="amber" onOpenDetail={(items) => setCategoryModal({ title: `Membre de jury — ${p.nom}`, items })} /></td>
                   <td><CellLibelle items={dansPeriode(p.president_jury)} accent="amber" onOpenDetail={(items) => setCategoryModal({ title: `Président de jury — ${p.nom}`, items })} /></td>

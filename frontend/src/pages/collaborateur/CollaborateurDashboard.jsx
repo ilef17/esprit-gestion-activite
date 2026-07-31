@@ -2316,7 +2316,7 @@ function CellLibelle({ items, onOpenDetail, accent = 'blue' }) {
     </button>
   )
 }
-
+const ENCADREMENT_TYPE_LABELS = { pfe: 'PFE', stage: 'Stage', mini_projet: 'Mini-projet', autre: 'Autre' }
 function CategoryListModal({ title, items, onClose }) {
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -2333,6 +2333,13 @@ function CategoryListModal({ title, items, onClose }) {
                 <div>
                   <b style={{ fontSize: 13 }}>{a.titre}</b>
                   {a.role && <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 2 }}>Rôle : {a.role}</div>}
+                  {(a.sujet || a.type || a.annee_universitaire) && (
+                    <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 2 }}>
+                      {a.sujet ? `${a.sujet} · ` : ''}
+                      {a.type ? (ENCADREMENT_TYPE_LABELS[a.type] || a.type) : ''}
+                      {a.annee_universitaire ? ` · ${a.annee_universitaire}` : ''}
+                    </div>
+                  )}
                 </div>
                 {a.date && <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>{formatDateShortFr(a.date)}</span>}
               </div>
@@ -2450,7 +2457,7 @@ function ActiviteEcoleTousLesCollegues({ showToast, filtreAnnee, filtreSemestre,
             {filtered.map((p) => (
               <tr key={p.id}>
                 <td><div className="name-cell"><div className="avatar sm">{initials(p.nom)}</div><span className="n">{p.nom}</span></div></td>
-                <td className="grp-start"><CellLibelle items={dansAnnee(p.encadrements)} accent="blue" onOpenDetail={(items) => setCategoryModal({ title: `Étudiants encadrés — ${p.nom}`, items })} /></td>
+                <td className="grp-start"><CellLibelle items={p.encadrements} accent="blue" onOpenDetail={(items) => setCategoryModal({ title: `Étudiants encadrés — ${p.nom}`, items })} /></td>
                 <td><CellLibelle items={p.expertises} accent="blue" onOpenDetail={(items) => setCategoryModal({ title: `Expertises — ${p.nom}`, items })} /></td>
                 <td className="grp-start"><CellLibelle items={dansPeriode(p.membre_jury)} accent="amber" onOpenDetail={(items) => setCategoryModal({ title: `Membre de jury — ${p.nom}`, items })} /></td>
                 <td><CellLibelle items={dansPeriode(p.president_jury)} accent="amber" onOpenDetail={(items) => setCategoryModal({ title: `Président de jury — ${p.nom}`, items })} /></td>
