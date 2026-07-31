@@ -188,7 +188,7 @@ const NAV_TABS = [
   { page: 'voeux-pedagogiques', label: 'Vœux pédagogiques', icon: 'poll' },
   { page: 'classes-affectees', label: 'Classes affectées', icon: 'book' },
   { page: 'activite-ecole', label: 'Activité école', icon: 'academic' },
-  { page: 'profil', label: 'Mon profil', icon: 'profile' },
+  { page: 'profil', label: 'Profil', icon: 'profile' },
 ]
 
 function CollaborateurDashboard() {

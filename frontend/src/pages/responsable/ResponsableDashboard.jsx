@@ -52,7 +52,7 @@ const PAGE_TITLES = {
   taches: 'Tâches',
   avancement: 'Avancement',
   horsequipe: 'Activité hors-équipe',
-  profil: 'Mon profil',
+  profil: 'Profil',
 }
 
 // Le collaborateur choisit lui-même "En cours" / "Faite" / "Problème de coordination".
