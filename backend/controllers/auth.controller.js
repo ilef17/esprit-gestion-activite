@@ -30,7 +30,6 @@ const ROLES = ['admin', 'responsable', 'collaborateur']
 // ---------- LOGIN ----------
 export async function login(req, res) {
   try {
-    console.log('LOGIN REQUEST BODY:', req.body)
     const captchaValid = await verifyCaptcha(req.body.captchaToken)
     if (!captchaValid) {
       return res.status(400).json({ message: 'Vérification anti-robot échouée.' })

@@ -6,16 +6,128 @@ dotenv.config()
 
 let transporter = null
 
+// Envoi par API HTTPS : nécessaire sur Render (offre gratuite), qui bloque les ports
+// SMTP sortants (25/465/587). Fournisseurs gérés, selon la variable définie :
+//   BREVO_API_KEY                        -> Brevo
+//   MAILJET_API_KEY + MAILJET_SECRET_KEY -> Mailjet
+//   SMTP2GO_API_KEY                      -> SMTP2GO
+// Sans aucune de ces variables, on retombe sur SMTP classique (nodemailer), utile en local.
+function usesHttpApi() {
+  return Boolean(
+    process.env.BREVO_API_KEY ||
+      (process.env.MAILJET_API_KEY && process.env.MAILJET_SECRET_KEY) ||
+      process.env.SMTP2GO_API_KEY
+  )
+}
+
+function mailConfigured() {
+  return usesHttpApi() || Boolean(process.env.SMTP_HOST)
+}
+
+// '"Nom" <a@b.c>' ou 'a@b.c'  ->  { name, email }
+function parseAddress(input) {
+  const s = String(input || '').trim()
+  const m = s.match(/^"?([^"<]*?)"?\s*<([^>]+)>$/)
+  if (m) return { name: m[1].trim() || undefined, email: m[2].trim() }
+  return { email: s }
+}
+
+async function postJson(url, headers, body, label) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', accept: 'application/json', ...headers },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(15000),
+  })
+  const raw = await res.text()
+  if (!res.ok) throw new Error(`${label} ${res.status}: ${raw}`)
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return raw
+  }
+}
+
+function createHttpTransport() {
+  return {
+    async sendMail({ from, to, subject, text, html }) {
+      const sender = parseAddress(from)
+      const recipients = (Array.isArray(to) ? to : String(to).split(','))
+        .map(parseAddress)
+        .filter((r) => r.email)
+
+      // Ces API ne gèrent pas les images jointes en CID : le logo est servi par une URL
+      // publique (EMAIL_LOGO_URL, ex. le fichier du dossier public du frontend).
+      const logoUrl = process.env.EMAIL_LOGO_URL
+      const htmlContent = logoUrl ? html.split(`cid:${ESPRIT_LOGO_CID}`).join(logoUrl) : html
+
+      if (process.env.BREVO_API_KEY) {
+        return postJson(
+          'https://api.brevo.com/v3/smtp/email',
+          { 'api-key': process.env.BREVO_API_KEY },
+          { sender, to: recipients, subject, htmlContent, textContent: text },
+          'Brevo'
+        )
+      }
+
+      if (process.env.MAILJET_API_KEY && process.env.MAILJET_SECRET_KEY) {
+        const auth = Buffer.from(
+          `${process.env.MAILJET_API_KEY}:${process.env.MAILJET_SECRET_KEY}`
+        ).toString('base64')
+        const data = await postJson(
+          'https://api.mailjet.com/v3.1/send',
+          { Authorization: `Basic ${auth}` },
+          {
+            Messages: [
+              {
+                From: { Email: sender.email, Name: sender.name },
+                To: recipients.map((r) => ({ Email: r.email, Name: r.name })),
+                Subject: subject,
+                TextPart: text,
+                HTMLPart: htmlContent,
+              },
+            ],
+          },
+          'Mailjet'
+        )
+        const msg = data && data.Messages && data.Messages[0]
+        if (msg && msg.Status && msg.Status !== 'success') {
+          throw new Error(`Mailjet: ${JSON.stringify(msg.Errors || msg)}`)
+        }
+        return data
+      }
+
+      // SMTP2GO
+      return postJson(
+        'https://api.smtp2go.com/v3/email/send',
+        { 'X-Smtp2go-Api-Key': process.env.SMTP2GO_API_KEY },
+        {
+          sender: sender.name ? `${sender.name} <${sender.email}>` : sender.email,
+          to: recipients.map((r) => (r.name ? `${r.name} <${r.email}>` : r.email)),
+          subject,
+          text_body: text,
+          html_body: htmlContent,
+        },
+        'SMTP2GO'
+      )
+    },
+  }
+}
+
 function getTransporter() {
   if (!transporter) {
-    transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT || 587),
-      secure: process.env.SMTP_SECURE === 'true',
-      auth: process.env.SMTP_USER
-        ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
-        : undefined,
-    })
+    if (usesHttpApi()) {
+      transporter = createHttpTransport()
+    } else {
+      transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST,
+        port: Number(process.env.SMTP_PORT || 587),
+        secure: process.env.SMTP_SECURE === 'true',
+        auth: process.env.SMTP_USER
+          ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+          : undefined,
+      })
+    }
   }
   return transporter
 }
@@ -251,7 +363,7 @@ function buildDemandeText({ collaborateurNom, description, contexte, dateDebut, 
 // Envoie l'email de vérification d'une activité hors équipe au contact désigné par le
 // Super Admin, avec un lien de confirmation en un clic (voir demandes.controller.js).
 export async function sendDemandeVerificationEmail({ to, collaborateurNom, description, contexte, dateDebut, dateFin, confirmUrl }) {
-  if (!process.env.SMTP_HOST) {
+  if (!mailConfigured()) {
     console.log(`[mailer] SMTP non configuré — lien de confirmation pour ${to} : ${confirmUrl}`)
     return
   }
@@ -359,7 +471,7 @@ function buildDemandeStatutText({ collaborateurNom, description, statut }) {
 // confirmation quand "Validation automatique" est activé dans Paramètres).
 export async function sendDemandeStatutEmail({ to, collaborateurNom, description, statut }) {
   if (!to) return
-  if (!process.env.SMTP_HOST) {
+  if (!mailConfigured()) {
     console.log(`[mailer] SMTP non configuré — notification "${statut}" non envoyée à ${to}`)
     return
   }
@@ -467,7 +579,7 @@ function buildAffectationText({ collaborateurNom, module, type, niveau, classes 
 // réponse au questionnaire de vœux pédagogiques (voir voeuxPedagogiques.controller.js).
 export async function sendAffectationEmail({ to, collaborateurNom, module, type, niveau, classes }) {
   if (!to) return
-  if (!process.env.SMTP_HOST) {
+  if (!mailConfigured()) {
     console.log(`[mailer] SMTP non configuré — affectation "${module}" non notifiée à ${to}`)
     return
   }
@@ -562,7 +674,7 @@ function buildTacheEcheanceText({ collaborateurNom, titre, dateEcheance }) {
 // l'appelant ne doit invoquer cette fonction que si elle est activée.
 export async function sendTacheEcheanceEmail({ to, collaborateurNom, titre, dateEcheance }) {
   if (!to) return
-  if (!process.env.SMTP_HOST) {
+  if (!mailConfigured()) {
     console.log(`[mailer] SMTP non configuré — rappel d'échéance "${titre}" non envoyé à ${to}`)
     return
   }
@@ -584,7 +696,7 @@ export async function sendTacheEcheanceEmail({ to, collaborateurNom, titre, date
 // En dev, si aucun SMTP n'est configuré, on log simplement le code dans la console
 // pour ne pas bloquer le flux de test.
 export async function sendResetCodeEmail({ to, identifiant, code }) {
-  if (!process.env.SMTP_HOST) {
+  if (!mailConfigured()) {
     console.log(`[mailer] SMTP non configuré — code de réinitialisation pour ${to} : ${code}`)
     return
   }
@@ -684,7 +796,7 @@ function buildWelcomeText({ nom, identifiant, role }) {
 // l'envoi d'e-mail rencontre un problème.
 export async function sendWelcomeEmail({ to, nom, identifiant, role }) {
   if (!to) return
-  if (!process.env.SMTP_HOST) {
+  if (!mailConfigured()) {
     console.log(`[mailer] SMTP non configuré — e-mail de bienvenue non envoyé à ${to}`)
     return
   }
@@ -786,7 +898,7 @@ function buildTachesDisponiblesText({ nom, equipeNom, nbTaches, titres }) {
 // autres e-mails de ce fichier.
 export async function sendTachesDisponiblesEmail({ to, nom, equipeNom, nbTaches, titres }) {
   if (!to) return
-  if (!process.env.SMTP_HOST) {
+  if (!mailConfigured()) {
     console.log(`[mailer] SMTP non configuré — disponibilité de tâches non notifiée à ${to}`)
     return
   }
@@ -876,7 +988,7 @@ function buildResponsableAssignationText({ responsableNom, equipeNom, typeEquipe
 // dans le texte, ex. "la sous-équipe" ou "l'équipe hors UP".
 export async function sendResponsableAssignationEmail({ to, responsableNom, equipeNom, typeEquipe }) {
   if (!to) return
-  if (!process.env.SMTP_HOST) {
+  if (!mailConfigured()) {
     console.log(`[mailer] SMTP non configuré — désignation responsable "${equipeNom}" non notifiée à ${to}`)
     return
   }
