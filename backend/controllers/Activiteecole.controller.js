@@ -36,7 +36,14 @@ const CATEGORIES_ACTIVITE = [
 ]
 
 function toItem(row) {
-  return { id: row.id_activite, titre: row.titre, role: row.role || null, date: row.date_activite }
+  return {
+    id: row.id_activite,
+    titre: row.titre,
+    role: row.role || null,
+    date: row.date_activite,
+    annee_universitaire: row.annee_universitaire || null,
+    semestre: row.semestre || null,
+  }
 }
 
 // Les encadrements n'ont pas de date précise (seulement une année universitaire

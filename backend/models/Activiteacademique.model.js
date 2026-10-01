@@ -1,4 +1,5 @@
 import pool from '../config/db.js'
+import { getPeriodeDeDate } from '../utils/periode.js'
 
 // Aligné sur l'enum `type` de la table `activite_academique` (schema.sql). `jury_soutenance`
 // est conservé pour compatibilité avec d'anciennes entrées, mais n'est plus proposé dans les
@@ -41,11 +42,27 @@ export async function getActiviteById(id) {
 }
 
 export async function addActivite(idCollaborateur, { type, titre, role, date_activite, description }) {
-  const [result] = await pool.query(
-    `INSERT INTO activite_academique (id_collaborateur, type, titre, role, date_activite, description)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [idCollaborateur, type, titre, role || null, date_activite || null, description || null]
-  )
+  // Même convention que l'application desktop : on enregistre aussi l'année universitaire
+  // et le semestre (déduits de la date), pour que les deux applications classent l'entrée
+  // dans la même période.
+  const periode = date_activite ? getPeriodeDeDate(date_activite) : null
+  const baseParams = [idCollaborateur, type, titre, role || null, date_activite || null, description || null]
+  let result
+  try {
+    ;[result] = await pool.query(
+      `INSERT INTO activite_academique (id_collaborateur, type, titre, role, date_activite, description, annee_universitaire, semestre)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [...baseParams, periode?.annee_universitaire || null, periode?.semestre || null]
+    )
+  } catch (err) {
+    if (err.code !== 'ER_BAD_FIELD_ERROR') throw err
+    // Colonnes de période absentes de cette base : insertion à l'ancienne.
+    ;[result] = await pool.query(
+      `INSERT INTO activite_academique (id_collaborateur, type, titre, role, date_activite, description)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      baseParams
+    )
+  }
   return {
     id_activite: result.insertId,
     id_collaborateur: Number(idCollaborateur),

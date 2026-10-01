@@ -174,6 +174,16 @@ function estDansPeriode(dateStr, filtreAnnee, filtreSemestre) {
   return p.annee === filtreAnnee && p.semestre === filtreSemestre
 }
 
+// Une activité école créée depuis l'application desktop porte déjà son année universitaire
+// et son semestre (période active au moment de la saisie). On les utilise en priorité ;
+// sinon (anciennes entrées, ou colonnes vides) on retombe sur le découpage par date.
+function activiteDansPeriode(a, filtreAnnee, filtreSemestre) {
+  const annee = a.annee_universitaire
+  const semestre = a.semestre
+  if (annee && semestre) return annee === filtreAnnee && semestre === filtreSemestre
+  return estDansPeriode(a.date_activite ?? a.date, filtreAnnee, filtreSemestre)
+}
+
 // Les encadrements n'ont qu'une année universitaire libre (pas de semestre) : un
 // encadrement reste donc visible sur les deux semestres de son année. Sans année
 // renseignée, il reste toujours visible (même logique que les entrées sans date).
@@ -612,7 +622,7 @@ function ActiviteEcoleApercu({ showToast, filtreAnnee, filtreSemestre }) {
 
   const sectionsFiltrees = Object.keys(ACTIVITE_LABELS).map((type) => ({
     type,
-    list: (detail[type] || []).filter((a) => estDansPeriode(a.date_activite, filtreAnnee, filtreSemestre)),
+    list: (detail[type] || []).filter((a) => activiteDansPeriode(a, filtreAnnee, filtreSemestre)),
   }))
   const totalFiltre = sectionsFiltrees.reduce((sum, s) => sum + s.list.length, 0)
 
@@ -2153,7 +2163,7 @@ function MonActiviteEcole({ showToast, filtreAnnee, filtreSemestre, anneesOption
 
           {/* ---------- Jury / Formations / Événements / Comités ---------- */}
           {Object.keys(ACTIVITE_LABELS).map((type) => {
-            const list = (detail[type] || []).filter((a) => estDansPeriode(a.date_activite, filtreAnnee, filtreSemestre))
+            const list = (detail[type] || []).filter((a) => activiteDansPeriode(a, filtreAnnee, filtreSemestre))
             const { icon: sectionIcon, color: sectionColor } = ACTIVITE_ICONS[type]
             return (
               <div className="ae-section" key={type}>
@@ -2424,7 +2434,7 @@ function ActiviteEcoleTousLesCollegues({ showToast, filtreAnnee, filtreSemestre,
   // sélectionnée (semestre inclus) ; les encadrements n'ont qu'une année universitaire
   // (pas de semestre) donc filtrés uniquement sur l'année. Les expertises n'ont
   // aucune notion de période et restent donc toujours affichées en entier.
-  const dansPeriode = (items) => (items || []).filter((it) => estDansPeriode(it.date, filtreAnnee, filtreSemestre))
+  const dansPeriode = (items) => (items || []).filter((it) => activiteDansPeriode(it, filtreAnnee, filtreSemestre))
   const dansAnnee = (items) => (items || []).filter((it) => estDansAnnee(it.annee_universitaire, filtreAnnee))
 
   return (
@@ -2559,7 +2569,7 @@ function CollegueDetail({ professeur, onClose, showToast, filtreAnnee, filtreSem
               </DetailSection>
 
               {Object.keys(ACTIVITE_LABELS).map((type) => {
-                const list = (detail[type] || []).filter((a) => estDansPeriode(a.date_activite, filtreAnnee, filtreSemestre))
+                const list = (detail[type] || []).filter((a) => activiteDansPeriode(a, filtreAnnee, filtreSemestre))
                 const accent = ACTIVITE_KEY_ACCENT[type] || 'blue'
                 return (
                   <DetailSection
