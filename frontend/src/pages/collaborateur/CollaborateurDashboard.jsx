@@ -624,7 +624,10 @@ function ActiviteEcoleApercu({ showToast, filtreAnnee, filtreSemestre }) {
     type,
     list: (detail[type] || []).filter((a) => activiteDansPeriode(a, filtreAnnee, filtreSemestre)),
   }))
-  const totalFiltre = sectionsFiltrees.reduce((sum, s) => sum + s.list.length, 0)
+  const encadrementsFiltres = (detail.encadrements || []).filter((enc) => estDansAnnee(enc.annee_universitaire, filtreAnnee))
+  const expertises = detail.expertises || []
+  const encTypeLabel = { pfe: 'PFE', stage: 'Stage', mini_projet: 'Mini-projet', autre: 'Autre' }
+  const totalFiltre = sectionsFiltrees.reduce((sum, s) => sum + s.list.length, 0) + encadrementsFiltres.length + expertises.length
 
   return (
     <div className="card">
@@ -638,6 +641,45 @@ function ActiviteEcoleApercu({ showToast, filtreAnnee, filtreSemestre }) {
         <div style={{ padding: '0 20px 20px', color: 'var(--text-faint)' }}>Chargement…</div>
       ) : (
         <div className="ae-body">
+          {expertises.length > 0 && (
+            <div className="ae-section">
+              <div className="ae-section-head">
+                <div className="ae-icon amber"><Icon.eval /></div>
+                <h3>Expertises</h3>
+                <span className="ae-count">{expertises.length}</span>
+              </div>
+              <div className="ae-chip-list">
+                {expertises.map((e) => (
+                  <span key={e.id_expertise} className="ae-chip amber">{e.libelle}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          {encadrementsFiltres.length > 0 && (
+            <div className="ae-section">
+              <div className="ae-section-head">
+                <div className="ae-icon blue"><Icon.students /></div>
+                <h3>Étudiants encadrés</h3>
+                <span className="ae-count">{encadrementsFiltres.length}</span>
+              </div>
+              <div className="ae-list">
+                {encadrementsFiltres.map((enc) => (
+                  <div key={enc.id_encadrement} className="ae-row">
+                    <div className="ae-row-main">
+                      <div className="ae-avatar">{initials(enc.nom_etudiant)}</div>
+                      <div>
+                        <div className="title">{enc.nom_etudiant}</div>
+                        <div className="meta">
+                          {enc.sujet ? `${enc.sujet} · ` : ''}{encTypeLabel[enc.type] || enc.type}
+                          {enc.annee_universitaire ? ` · ${enc.annee_universitaire}` : ''}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {sectionsFiltrees.filter((s) => s.list.length > 0).map(({ type, list }) => {
             const { icon: sectionIcon, color: sectionColor } = ACTIVITE_ICONS[type]
             return (
