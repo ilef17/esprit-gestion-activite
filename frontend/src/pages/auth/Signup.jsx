@@ -119,11 +119,11 @@ function Signup() {
             <div className="form-grid" style={{ marginBottom: '4px' }}>
               <div className="field">
                 <label>Prénom</label>
-                <input placeholder="Hana" type="text" value={prenom} onChange={(e) => setPrenom(e.target.value)} />
+                <input placeholder="prenom" type="text" value={prenom} onChange={(e) => setPrenom(e.target.value)} />
               </div>
               <div className="field">
                 <label>Nom</label>
-                <input placeholder="Belaid" type="text" value={nom} onChange={(e) => setNom(e.target.value)} />
+                <input placeholder="nom" type="text" value={nom} onChange={(e) => setNom(e.target.value)} />
               </div>
               <div className="field full">
                 <label>Email institutionnel</label>
