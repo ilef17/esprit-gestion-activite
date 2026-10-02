@@ -131,7 +131,7 @@ function Signup() {
               </div>
               <div className="field full">
                 <label>Identifiant ESPRIT</label>
-                <input placeholder="Ex. 253JFT1111" type="text" value={identifiant} onChange={(e) => setIdentifiant(e.target.value)} />
+                <input placeholder="Ex. 287JFT1111" type="text" value={identifiant} onChange={(e) => setIdentifiant(e.target.value)} />
               </div>
 
               <div className="field full">
