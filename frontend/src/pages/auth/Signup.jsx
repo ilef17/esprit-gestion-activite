@@ -139,12 +139,9 @@ function Signup() {
                 <select id="signup-role" value={role} onChange={(e) => setRole(e.target.value)}>
                   <option value="collaborateur">Collaborateur</option>
                   <option value="responsable">Responsable de sous-équipe</option>
-                  <option value="admin">Admin</option>
                 </select>
                 <div className="field-note">
-                  {role === 'admin'
-                    ? "Réservé à un administrateur déjà connecté — la création échouera sinon."
-                    : "Le compte Admin est créé uniquement par l'administration."}
+                  Le compte Admin est créé uniquement par l'administration.
                 </div>
               </div>
 
