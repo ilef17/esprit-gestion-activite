@@ -3133,7 +3133,7 @@ function VoeuxReponses({ campagne, showToast }) {
               <td><div className="name-cell"><div className="avatar sm">{initials(r.collaborateur_nom)}</div><span className="n">{r.collaborateur_nom}</span></div></td>
               <td>{(r.sous_equipes || []).map((s) => s.nom).join(', ') || '—'}</td>
               <td>{r.date_soumission ? new Date(r.date_soumission).toLocaleDateString('fr-FR') : '—'}</td>
-              <td><button className="btn btn-ghost btn-sm" onClick={() => setDetail(r)}>Voir les réponses</button></td>
+              <td><button className="btn btn-ghost btn-sm btn-view-responses" onClick={() => setDetail(r)}>Voir les réponses</button></td>
             </tr>
           ))}
         </tbody>
@@ -3549,7 +3549,7 @@ function Evaluation({ teams, horsUpTeams, showToast, filtreAnnee, filtreSemestre
             <select
               value={teamSelectValue}
               onChange={(e) => selectTeam(e.target.value)}
-              style={{ fontFamily: 'Inter', fontSize: 11.5, fontWeight: 700, padding: '6px 10px', borderRadius: 999, border: '1px solid var(--border)', background: '#fff' }}
+              style={{ fontFamily: 'Inter', fontSize: 11.5, fontWeight: 700, padding: '6px 10px', borderRadius: 999, border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--text)' }}
             >
               <optgroup label="Sous-équipes (UP)">
                 {teams.map((t) => <option key={`up-${t.id}`} value={`up:${t.id}`}>{t.nom}</option>)}

@@ -236,6 +236,14 @@
 .admin-root .btn-sm { padding:5px 11px; font-size:10.5px; gap:5px; }
 .admin-root .btn-sm svg { width:12px; height:12px; }
 
+/* Mode sombre : liste déroulante des filtres (équipe, etc.) lisible, et bouton « Voir les réponses » mis en évidence. */
+.admin-root.dark select option, .admin-root.dark select optgroup { background:var(--card); color:var(--text); }
+.admin-root.dark select optgroup { color:var(--text-muted); font-style:normal; font-weight:700; }
+.admin-root.dark .btn-view-responses {
+  background:var(--red-tint); color:var(--red); border:1px solid var(--red); font-weight:700;
+}
+.admin-root.dark .btn-view-responses:hover { background:var(--red); color:#fff; border-color:var(--red); }
+
 .admin-root table { width:100%; border-collapse:collapse; }
 .admin-root thead th {
     text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:.04em;
